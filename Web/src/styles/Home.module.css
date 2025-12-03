@@ -1,0 +1,64 @@
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.homeContainer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 4rem 1rem;
+  min-height: 100vh; /* now covers full screen */
+  background: linear-gradient(to right top, #f9fafb, #eef2ff);
+  color: var(--text-color);
+  animation: fadeUp 1s ease-out;
+  transition: all 0.3s ease-in-out;
+}
+
+.title {
+  font-size: 3rem;
+  font-weight: 800;
+  margin-bottom: 1rem;
+  animation: fadeUp 1.2s ease-out;
+}
+
+.gradientText {
+  background: linear-gradient(90deg, var(--primary-color), var(--secondary-color));
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.subtitle {
+  font-size: 1.3rem;
+  margin-bottom: 1rem;
+  color: #4b5563;
+  animation: fadeUp 1.4s ease-out;
+}
+
+.description {
+  font-size: 1rem;
+  max-width: 700px;
+  margin: 0 auto;
+  color: #374151;
+  line-height: 1.8;
+  animation: fadeUp 1.6s ease-out;
+  margin-bottom: 2rem;
+}
+
+.toolGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 2rem;
+  width: 100%;
+  max-width: 1000px;
+  padding: 0 2rem;
+  animation: fadeUp 1.8s ease-out;
+}

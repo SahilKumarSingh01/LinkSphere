@@ -1,0 +1,14 @@
+:root {
+  --primary-color: #4f46e5;
+  --secondary-color: #f97316;
+  --bg-color: #f9fafb;
+  --text-color: #111827;
+}
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+body{
+    font-family: sans-serif;
+}

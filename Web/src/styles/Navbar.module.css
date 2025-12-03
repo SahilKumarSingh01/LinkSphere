@@ -1,0 +1,41 @@
+.navbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 1.5rem;
+  background-color: #f0fff5;
+  border-bottom: 1px solid #cdecd7;
+  box-shadow: 0 2px 6px rgba(120, 200, 160, 0.15);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.brand {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: #2e7d32;
+  cursor: pointer;
+  user-select: none;
+}
+
+.iconWrapper {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background-color: #4caf50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background-color 0.3s ease;
+}
+
+.iconWrapper:hover {
+  background-color: #388e3c;
+}
+
+.icon {
+  color: white;
+  font-size: 18px;
+}
