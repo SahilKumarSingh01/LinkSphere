@@ -2,16 +2,12 @@
 import { RingBuffer } from './RingBuffer.js';
 
 export class Microphone {
-  constructor(bufferSize = 8192) { // choose a big enough buffer
-    this.ringBuffer = new RingBuffer(bufferSize);
-    this.source = null;
-    this.processor = null;
-    this.audioCtx = null;
-    this.stream = null;
-  }
+  constructor(stream, bufferSize = 8192) {
+    if (!stream) throw new Error("Microphone requires a MediaStream.");
 
-  async init() {
-    this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    this.stream = stream;
+    this.ringBuffer = new RingBuffer(bufferSize);
+
     this.audioCtx = new (window.AudioContext)({ sampleRate: 8000 });
     this.source = this.audioCtx.createMediaStreamSource(this.stream);
 

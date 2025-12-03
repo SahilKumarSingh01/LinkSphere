@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Microphone, Speaker } from "../utils/audio";
 import WaveformVisualizer from "../components/WaveformVisualizer";
 
@@ -9,24 +9,49 @@ const Home = () => {
   const speakerRef = useRef(null);
 
   const startAudio = async () => {
-    const mic = new Microphone();
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+    const mic = new Microphone(stream); 
     const speaker = new Speaker();
 
-    await mic.init();
     micRef.current = mic;
     speakerRef.current = speaker;
     setStarted(true);
 
     setInterval(() => {
-      const buffer = new Float32Array(mic.availableToRead()); // chunk size
-      const read = mic.readSamples(buffer);
-      if (read > 0) {
-        chunkRef.current = buffer;
-        speaker.writeSamples(buffer);
+      const available = mic.availableToRead();
+      if (available > 0) {
+        const buffer = new Float32Array(available);
+        const read = mic.readSamples(buffer);
+        if (read > 0) {
+          chunkRef.current = buffer;
+          speaker.writeSamples(buffer);
+        }
       }
-    }, 150);
-
+    }, 200);
   };
+
+  const handleDeviceChange = async (newDeviceId) => {
+    // stop old microphone
+    if (micRef.current) {
+      micRef.current.stop();
+      micRef.current = null;
+    }
+    if(speakerRef.current){
+      speakerRef.current.stop();
+      speakerRef.current=null;
+    }
+    startAudio();
+  };
+
+  useEffect(()=>{
+    navigator.mediaDevices.addEventListener("devicechange", handleDeviceChange);
+
+    return () => {
+      navigator.mediaDevices.removeEventListener("devicechange", handleDeviceChange);
+    };
+  },[])
+
 
   return (
     <main style={{ padding: "2rem" }}>
