@@ -1,121 +1,149 @@
+import org.java_websocket.server.DefaultSSLWebSocketServerFactory;
 import org.java_websocket.server.WebSocketServer;
 import org.java_websocket.WebSocket;
 import org.java_websocket.handshake.ClientHandshake;
 import org.json.JSONObject;
 
+import javax.net.ssl.KeyManagerFactory;
+import javax.net.ssl.SSLContext;
+import java.io.FileInputStream;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
+import java.security.KeyStore;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Map;
-import java.util.Set;
 
 public class MultiClientWebSocketServer extends WebSocketServer {
 
-    private final Map<String, WebSocket> clientMap = Collections.synchronizedMap(new HashMap<>());
-    private WebSocket master = null; // master client
+    private final Map<String, WebSocket> clientMap =
+            Collections.synchronizedMap(new HashMap<>());
 
-    private final AudioCore audioCore;
+    private WebSocket master = null;
 
-    public MultiClientWebSocketServer(int port, int recvBufferSize, int sendBufferSize, int mixIntervalMs) {
+    public MultiClientWebSocketServer(int port) {
         super(new InetSocketAddress(port));
-        this.audioCore = new AudioCore(recvBufferSize, sendBufferSize, mixIntervalMs);
+        enableSSL();   // 🔐 Add TLS
+    }
+
+    private void enableSSL() {
+        try {
+            String keystorePath = "keystore.p12";   // your .p12 file
+            String keystorePassword = "password";    // your password
+
+            KeyStore ks = KeyStore.getInstance("PKCS12");
+            FileInputStream fis = new FileInputStream(keystorePath);
+            ks.load(fis, keystorePassword.toCharArray());
+
+            KeyManagerFactory kmf = KeyManagerFactory.getInstance("SunX509");
+            kmf.init(ks, keystorePassword.toCharArray());
+
+            SSLContext sslContext = SSLContext.getInstance("TLS");
+            sslContext.init(kmf.getKeyManagers(), null, null);
+
+            setWebSocketFactory(new DefaultSSLWebSocketServerFactory(sslContext));
+            System.out.println("WSS enabled (TLS active)");
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    private String addrOf(WebSocket conn) {
+        return conn.getRemoteSocketAddress().getAddress().getHostAddress();
+    }
+
+    private boolean isLocal(String addr) {
+        return addr.equals("127.0.0.1") || addr.equals("0:0:0:0:0:0:0:1");
+    }
+
+    private void notifyMaster(String type, String who) {
+        if (master != null && master.isOpen()) {
+            JSONObject json = new JSONObject();
+            json.put("type", type);
+            json.put("addr", who);
+            json.put("connection", "keep-alive");
+            master.send(json.toString());
+        }
+    }
+
+    private void sendBinaryToMaster(WebSocket sender, ByteBuffer data) {
+        if (master == null || !master.isOpen() || sender == master) return;
+
+        String addr = addrOf(sender);
+        byte[] addrBytes = addr.getBytes();
+
+        ByteBuffer out =
+                ByteBuffer.allocate(1 + addrBytes.length + data.remaining());
+        out.put((byte) addrBytes.length);
+        out.put(addrBytes);
+        out.put(data);
+        out.flip();
+
+        master.send(out);
     }
 
     @Override
     public void onOpen(WebSocket conn, ClientHandshake handshake) {
-        String addr = conn.getRemoteSocketAddress().getAddress().getHostAddress();
-;
+        String addr = addrOf(conn);
         clientMap.put(addr, conn);
 
-         if (addr.equals("0:0:0:0:0:0:0:1") || addr.equals("127.0.0.1")) {
+        if (isLocal(addr)) {
             master = conn;
-            audioCore.addClient(conn);
-            System.out.println("Master client connected: " + addr);
+            System.out.println("Master connected: " + addr);
         } else {
             System.out.println("Client connected: " + addr);
+            notifyMaster("connected", addr);
         }
-        // Add to AudioCore
-        //you need to remove this line remember fdlfdsljfsdfoiejwopjfpdjj pjdsdjfklsjdlf dsjlkfjsdlkjfklsjf ls
-        audioCore.addClient(conn);
-
-        // Assume logic to set master if this is the special client
     }
 
     @Override
     public void onClose(WebSocket conn, int code, String reason, boolean remote) {
+        String addr = addrOf(conn);
         clientMap.values().remove(conn);
 
-        // Remove from AudioCore
-        audioCore.removeClient(conn);
-
         if (conn == master) {
-            System.out.println("Master client disconnected: " + conn.getRemoteSocketAddress());
             master = null;
+            System.out.println("Master disconnected");
         } else {
-            System.out.println("Client disconnected: " + conn.getRemoteSocketAddress());
+            System.out.println("Client disconnected: " + addr);
+            notifyMaster("disconnected", addr);
         }
     }
 
     @Override
-    public void onMessage(WebSocket conn, String message) {
+    public void onMessage(WebSocket conn, String msg) {
         try {
-            JSONObject json = new JSONObject(message);
+            JSONObject json = new JSONObject(msg);
 
             if (conn == master) {
-                // Message from master → handle toSend/status
                 if (!json.has("toSend")) return;
 
                 String targetAddr = json.getString("toSend");
-                WebSocket targetClient = clientMap.get(targetAddr);
+                WebSocket target = clientMap.get(targetAddr);
 
-                if (targetClient != null && targetClient.isOpen()) {
-                    targetClient.send(json.toString());
+                if (target == null || !target.isOpen()) return;
 
-                    if (json.has("status") && json.getString("status").equalsIgnoreCase("closing")) {
-                        targetClient.close();
-                        clientMap.remove(targetAddr);
-                        audioCore.removeClient(targetClient);
-                        System.out.println("Closed client: " + targetAddr);
-                    }
-                    if (json.has("status") && json.getString("status").equalsIgnoreCase("connecting")) {
-                        audioCore.addClient(targetClient);
-                        System.out.println("Added target client to AudioCore: " + targetAddr);
-                    }
+                String connHeader = json.optString("connection", "keep-alive");
+                target.send(json.toString());
+
+                if (connHeader.equalsIgnoreCase("close")) {
+                    clientMap.values().remove(target);
+                    target.close();
                 }
-                
                 return;
             }
 
-            // Forward normal client messages to master
             if (master != null && master.isOpen()) {
-                JSONObject forwardJson;
-
-                try {
-                    forwardJson = new JSONObject(message);
-                } catch (Exception e) {
-                    // If not JSON, wrap it
-                    forwardJson = new JSONObject();
-                    forwardJson.put("msg", message);
-                }
-
-                // Add the "from" field
-                String fromAddr = conn.getRemoteSocketAddress().getAddress().getHostAddress();
-                forwardJson.put("from", fromAddr);
-
-                master.send(forwardJson.toString());
+                json.put("from", addrOf(conn));
+                json.put("connection", "keep-alive");
+                master.send(json.toString());
             } else {
-                // Master not connected → notify client and close
                 JSONObject resp = new JSONObject();
-                resp.put("status", "closing");
-                resp.put("msg", "client is not connected");
-
+                resp.put("connection", "close");
+                resp.put("msg", "master not connected");
                 conn.send(resp.toString());
                 conn.close();
                 clientMap.values().remove(conn);
-                audioCore.removeClient(conn);
-                System.out.println("Closed client because master is not connected: " + conn.getRemoteSocketAddress());
             }
 
         } catch (Exception e) {
@@ -124,11 +152,8 @@ public class MultiClientWebSocketServer extends WebSocketServer {
     }
 
     @Override
-    public void onMessage(WebSocket conn, ByteBuffer message) {
-        // Forward binary audio to AudioCore
-        byte[] data = new byte[message.remaining()];
-        message.get(data);
-        audioCore.onAudioData(conn, data);
+    public void onMessage(WebSocket conn, ByteBuffer data) {
+        sendBinaryToMaster(conn, data);
     }
 
     @Override
@@ -136,28 +161,15 @@ public class MultiClientWebSocketServer extends WebSocketServer {
         ex.printStackTrace();
         if (conn != null) {
             clientMap.values().remove(conn);
-            audioCore.removeClient(conn);
         }
     }
 
     @Override
     public void onStart() {
-        System.out.println("WebSocket server started on port: " + getPort());
+        System.out.println("Secure WebSocket server running on port " + getPort());
     }
 
     public static void main(String[] args) {
-        int port = 3000;
-        int recvBufferSize = 1024 * 16; // 16 KB receive buffer
-        int sendBufferSize = 1024 * 16; // 16 KB send buffer
-        int mixIntervalMs = 20; // 20 ms mix interval
-
-        MultiClientWebSocketServer server = new MultiClientWebSocketServer(port, recvBufferSize, sendBufferSize, mixIntervalMs);
-        server.start();
-    }
-
-    // Optional: externally set master
-    public void setMaster(WebSocket masterConn) {
-        this.master = masterConn;
-        System.out.println("Master client set: " + masterConn.getRemoteSocketAddress());
+        new MultiClientWebSocketServer(3000).start();
     }
 }

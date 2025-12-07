@@ -5,6 +5,7 @@ import Home from './pages/Home.jsx';
 import About from './pages/About.jsx'
 import NotFound from './pages/NotFound.jsx';
 import Navbar from './components/Navbar.jsx';
+import Testing from './pages/Testing.jsx'
 import './styles/global.css';
 
 const App = () => {
@@ -16,7 +17,7 @@ const App = () => {
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/about" element={<About />} />
-
+            <Route path="/testing" element={<Testing />} />
             {/* Add more routes here later */}
             <Route path="*" element={<NotFound />} />
           </Routes>

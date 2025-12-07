@@ -1,0 +1,63 @@
+﻿# Build results
+[Bb]in/
+[Oo]bj/
+x64/
+x86/
+ARM/
+ARM64/
+
+# Visual Studio cache and temp files
+.vs/
+*.vscode/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# CMake build folders
+[Cc]MakeFiles/
+CMakeCache.txt
+CMakeScripts/
+Testing/
+Makefile
+cmake_install.cmake
+
+# NuGet
+*.nupkg
+packages/
+*.snupkg
+project.lock.json
+project.fragment.lock.json
+
+# Logs
+*.log
+
+# Generated files
+*.dll
+*.exe
+*.pdb
+*.obj
+*.ilk
+*.idb
+*.tlog
+*.cache
+*.pch
+
+# Intermediate & debug
+*.iobj
+*.ipdb
+*.db
+*.opendb
+
+# Others you should ignore
+*.opensdf
+*.sdf
+*.tlog
+*.log
+*.lastcodeanalysissucceeded
+
+# Ignore local environment configs
+*.local.json
+
+# WebView2 auto-generated folders
+WebView2Cache/

@@ -9,8 +9,9 @@ const Home = () => {
   const speakerRef = useRef(null);
 
   const startAudio = async () => {
+    console.log("hello how are you this function is called");
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-
+    console.log(stream);
     const mic = new Microphone(stream); 
     const speaker = new Speaker();
 

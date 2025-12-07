@@ -1,0 +1,7 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="linkSphereBrowser.vcxproj" Id="83635a18-bad1-4931-9163-46b78cafd1be" />
+</Solution>
