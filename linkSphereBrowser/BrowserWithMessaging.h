@@ -142,8 +142,7 @@ private:
             });
     }
 
-    void notify() {
-        const wchar_t* msg = L"dataReady\0";
+    void notify(const wchar_t* msg = L"dataReady\0") {
         PostMessageW(hWnd, WM_SEND_TO_WEBVIEW, 0, (LPARAM)_wcsdup(msg));
     }
 

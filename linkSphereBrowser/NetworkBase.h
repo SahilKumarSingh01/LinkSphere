@@ -1,0 +1,329 @@
+#pragma once
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <thread>
+#include <vector>
+#include <string>
+#include <mutex>
+#include <condition_variable>
+#include <atomic>
+#include "MessageBlock.h"
+#pragma comment(lib, "ws2_32.lib")
+
+//#include <iostream>/*
+//using namespace std;*/
+
+struct ConnectionContext {
+    std::thread senderThread;
+    std::thread receiverThread;
+
+    std::string srcIP;
+    std::string destIP;
+    uint16_t srcPort;
+    uint16_t destPort;
+
+    SOCKET sock = INVALID_SOCKET;
+    bool isTCP;
+    bool isClient;
+
+    std::atomic<bool> running{ true };
+
+    std::vector<MessageBlock*> outgoingQueue;
+    std::mutex outgoingMutex;
+    std::condition_variable outgoingCV;
+};
+
+class NetworkBase {
+public:
+    std::vector<MessageBlock*> incomingQueue;
+    std::mutex incomingMutex;
+    std::condition_variable incomingCV;
+
+    void (*onError)(const char* text) = nullptr;
+
+    // --------------------------------------------------------------
+    // TCP CREATE + THREADS
+    // --------------------------------------------------------------
+    ConnectionContext* createTCP(const std::string& srcIP, uint16_t srcPort,
+        const std::string& destIP, uint16_t destPort)
+    {
+        SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (s == INVALID_SOCKET) {
+            if (onError) {
+                std::string err =
+                    "Failed to create TCP socket [Src: " + srcIP + ":" + std::to_string(srcPort) +
+                    " Dest: " + destIP + ":" + std::to_string(destPort) + "]";
+                onError(err.c_str());
+            }
+            return nullptr;
+        }
+
+        ConnectionContext* ctx = new ConnectionContext();
+        ctx->srcIP = srcIP;
+        ctx->destIP = destIP;
+        ctx->srcPort = srcPort;
+        ctx->destPort = destPort;
+        ctx->sock = s;
+        ctx->isTCP = true;
+        ctx->isClient = true;
+
+        std::thread([this, ctx]() {
+            sockaddr_in addr{};
+            addr.sin_family = AF_INET;
+            addr.sin_port = htons(ctx->destPort);
+            inet_pton(AF_INET, ctx->destIP.c_str(), &addr.sin_addr);
+
+            if (connect(ctx->sock, (sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
+                if (onError) {
+                    int errCode = WSAGetLastError();
+                    onError((getCtxString(ctx) + " TCP connect failed. OS Error: " + getOSErrorString(errCode)).c_str());
+                }
+                ctx->running = false;
+                return;
+            }
+
+            ctx->senderThread = std::thread([this, ctx]() { tcpSender(ctx); });
+            ctx->receiverThread = std::thread([this, ctx]() { tcpReceiver(ctx); });
+
+            }).detach();
+
+        return ctx;
+    }
+
+    // --------------------------------------------------------------
+    // UDP CREATE + THREADS
+    // --------------------------------------------------------------
+    ConnectionContext* createUDP(const std::string& srcIP, uint16_t srcPort,
+        const std::string& destIP, uint16_t destPort)
+    {
+        ConnectionContext* ctx = new ConnectionContext();
+        ctx->srcIP = srcIP;
+        ctx->destIP = destIP;
+        ctx->srcPort = srcPort;
+        ctx->destPort = destPort;
+        ctx->isTCP = false;
+
+        std::thread([this, ctx]() {
+            SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+            if (s == INVALID_SOCKET) {
+                if (onError) {
+                    int errCode = WSAGetLastError();
+                    onError((getCtxString(ctx) + " Failed to create UDP socket. OS Error: " + getOSErrorString(errCode)).c_str());
+                }
+                ctx->running = false;
+                return;
+            }
+
+            sockaddr_in srcAddr{};
+            srcAddr.sin_family = AF_INET;
+            srcAddr.sin_port = htons(ctx->srcPort);
+            srcAddr.sin_addr.s_addr = INADDR_ANY;
+
+            if (bind(s, (sockaddr*)&srcAddr, sizeof(srcAddr)) == SOCKET_ERROR) {
+                if (onError) {
+                    int errCode = WSAGetLastError();
+                    onError((getCtxString(ctx) + " Failed to bind UDP socket. OS Error: " + getOSErrorString(errCode)).c_str());
+                }
+                closesocket(s);
+                ctx->running = false;
+                return;
+            }
+
+            ctx->sock = s;
+
+            ctx->senderThread = std::thread([this, ctx]() { udpSender(ctx); });
+            ctx->receiverThread = std::thread([this, ctx]() { udpReceiver(ctx); });
+
+            }).detach();
+
+        return ctx;
+    }
+
+protected:
+    std::string getCtxString(ConnectionContext* ctx) {
+        if (!ctx) return "Invalid Context";
+        return "Src: " + ctx->srcIP + ":" + std::to_string(ctx->srcPort) +
+            " Dest: " + ctx->destIP + ":" + std::to_string(ctx->destPort);
+    }
+
+    std::string getOSErrorString(int code) {
+        char* errMsg = nullptr;
+        FormatMessageA(
+            FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+            nullptr, code,
+            MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+            (LPSTR)&errMsg, 0, nullptr
+        );
+        std::string msg = errMsg ? errMsg : "Unknown OS error";
+        if (errMsg) LocalFree(errMsg);
+        return msg;
+    }
+
+    // --------------------------------------------------------------
+    // TCP SENDER
+    // --------------------------------------------------------------
+    void tcpSender(ConnectionContext* ctx) {
+        while (ctx->running) {
+            MessageBlock* msg = nullptr;
+            {
+                std::unique_lock<std::mutex> lock(ctx->outgoingMutex);
+                ctx->outgoingCV.wait(lock, [ctx]() { return !ctx->running || !ctx->outgoingQueue.empty(); });
+
+                if (!ctx->running) return;
+
+                if (!ctx->outgoingQueue.empty()) {
+                    msg = ctx->outgoingQueue.front();
+                    ctx->outgoingQueue.erase(ctx->outgoingQueue.begin());
+                }
+            }
+
+            if (msg) {
+                const char* ptr = reinterpret_cast<const char*>(msg->getRawData());
+                int toSend = (int)msg->getTotalSize();
+                while (toSend > 0 && ctx->running) {
+                    int s = send(ctx->sock, ptr, toSend, 0);
+                    if (s == SOCKET_ERROR) {
+                        if (onError) {
+                            int errCode = WSAGetLastError();
+                            onError((getCtxString(ctx) + " TCP send failed. OS Error: " + getOSErrorString(errCode)).c_str());
+                        }
+                        break;
+                    }
+                    ptr += s;
+                    toSend -= s;
+                }
+                delete msg;
+            }
+        }
+    }
+
+    // --------------------------------------------------------------
+    // TCP RECEIVER
+    // --------------------------------------------------------------
+    void tcpReceiver(ConnectionContext* ctx) {
+        while (ctx->running) {
+            uint8_t sizeBuffer[4];
+            int received = 0;
+            while (received < 4 && ctx->running) {
+                int r = recv(ctx->sock, (char*)sizeBuffer + received, 4 - received, 0);
+                if (r <= 0) {
+                    if (onError) onError((getCtxString(ctx) + " TCP recv header failed").c_str());
+                    ctx->running = false;
+                    return;
+                }
+                received += r;
+            }
+
+            uint32_t totalSize = (sizeBuffer[0] << 24) | (sizeBuffer[1] << 16) | (sizeBuffer[2] << 8) | sizeBuffer[3];
+            if (totalSize < 17) continue;
+
+            std::unique_ptr<uint8_t[]> fullBuffer(new uint8_t[totalSize]);
+            std::memcpy(fullBuffer.get(), sizeBuffer, 4);
+
+            received = 4;
+            while (received < totalSize && ctx->running) {
+                int r = recv(ctx->sock, (char*)fullBuffer.get() + received, totalSize - received, 0);
+                if (r <= 0) {
+                    if (onError) onError((getCtxString(ctx) + " TCP recv body failed").c_str());
+                    ctx->running = false;
+                    return;
+                }
+                received += r;
+            }
+
+            MessageBlock* mb = new MessageBlock(fullBuffer.get(), totalSize);
+            {
+                std::lock_guard<std::mutex> lock(incomingMutex);
+                incomingQueue.push_back(mb);
+            }
+            incomingCV.notify_one();
+        }
+    }
+
+    // --------------------------------------------------------------
+    // UDP SENDER
+    // --------------------------------------------------------------
+    void udpSender(ConnectionContext* ctx) {
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(ctx->destPort);
+        inet_pton(AF_INET, ctx->destIP.c_str(), &addr.sin_addr);
+
+        while (ctx->running) {
+            MessageBlock* msg = nullptr;
+            {
+                std::unique_lock<std::mutex> lock(ctx->outgoingMutex);
+                ctx->outgoingCV.wait(lock, [ctx]() { return !ctx->running || !ctx->outgoingQueue.empty(); });
+
+                if (!ctx->running) return;
+
+                if (!ctx->outgoingQueue.empty()) {
+                    msg = ctx->outgoingQueue.front();
+                    ctx->outgoingQueue.erase(ctx->outgoingQueue.begin());
+                }
+            }
+
+            if (msg) {
+                const char* ptr = reinterpret_cast<const char*>(msg->getRawData());
+                int toSend = (int)msg->getTotalSize();
+                while (toSend > 0 && ctx->running) {
+                    int s = sendto(ctx->sock, ptr, toSend, 0, (sockaddr*)&addr, sizeof(addr));
+                    if (s == SOCKET_ERROR) {
+                        int errCode = WSAGetLastError();
+                        if (onError) onError((getCtxString(ctx) + " UDP sendto failed. OS Error: " + getOSErrorString(errCode)).c_str());
+                        break;
+                    }
+                    ptr += s;
+                    toSend -= s;
+                }
+                delete msg;
+            }
+        }
+    }
+
+    // --------------------------------------------------------------
+    // UDP RECEIVER
+    // --------------------------------------------------------------
+    void udpReceiver(ConnectionContext* ctx) {
+        const int bufferSize = 1024 * 64;
+        uint8_t* buffer = new uint8_t[bufferSize];
+
+        sockaddr_in from{};
+        int fromLen = sizeof(from);
+
+        while (ctx->running) {
+            int r = recvfrom(ctx->sock, (char*)buffer, bufferSize, 0, (sockaddr*)&from, &fromLen);
+            if (r <= 0) continue;
+
+            MessageBlock* mb = new MessageBlock(buffer, r);
+            {
+                std::lock_guard<std::mutex> lock(incomingMutex);
+                incomingQueue.push_back(mb);
+            }
+            incomingCV.notify_one();
+        }
+
+        delete[] buffer;
+    }
+
+    void stopConnection(ConnectionContext* ctx) {
+        if (!ctx) return;
+
+        ctx->running = false;
+        ctx->outgoingCV.notify_all();
+
+        if (ctx->sock != INVALID_SOCKET) {
+            shutdown(ctx->sock, SD_BOTH);
+            closesocket(ctx->sock);
+            ctx->sock = INVALID_SOCKET;
+        }
+
+        if (ctx->senderThread.joinable()) ctx->senderThread.join();
+        if (ctx->receiverThread.joinable()) ctx->receiverThread.join();
+
+        for (MessageBlock* msg : ctx->outgoingQueue) delete msg;
+        ctx->outgoingQueue.clear();
+
+        delete ctx;
+    }
+};

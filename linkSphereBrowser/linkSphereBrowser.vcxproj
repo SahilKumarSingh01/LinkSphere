@@ -139,6 +139,8 @@
     <ClInclude Include="BrowserWithMessaging.h" />
     <ClInclude Include="MessageBlock.h" />
     <ClInclude Include="MessageChannel.h" />
+    <ClInclude Include="NetworkBase.h" />
+    <ClInclude Include="NetworkManager.h" />
     <ClInclude Include="Resource.h" />
     <ClInclude Include="targetver.h" />
     <ClInclude Include="linkSphereBrowser.h" />
