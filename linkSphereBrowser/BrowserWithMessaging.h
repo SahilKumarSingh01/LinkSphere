@@ -1,6 +1,5 @@
 ﻿#include <thread>
 #include <chrono>
-#include <thread>
 #include <mutex>
 #include <condition_variable>
 #include "BrowserWindow.h"
@@ -38,7 +37,15 @@ public:
         // Start polling thread
         startReceiverThread();
     }
+    void setOnNotificationCallback(void (*cb)(const std::wstring&)) {
+        onNotification = cb;
 
+    }
+
+
+    void notify(const wchar_t* msg = L"dataReady\0") {
+        PostMessageW(hWnd, WM_SEND_TO_WEBVIEW, 0, (LPARAM)_wcsdup(msg));
+    }
 private:
 
     wil::com_ptr<ICoreWebView2SharedBuffer> sharedBuffer;
@@ -46,7 +53,7 @@ private:
 
     std::unique_ptr<MessageChannel> channel;
     BinaryMessageCallback onReceive = nullptr;
-
+    void (*onNotification)(const std::wstring&) = nullptr;
     std::mutex g_mutex;
     std::condition_variable g_cv;
     std::thread receiverThread;
@@ -85,11 +92,13 @@ private:
                                 std::wstring message(msg.get());
                                 if (message == L"dataReady") {
                                     // Notify the receiver thread that new data is available
-                                    lock_guard<mutex> lock(g_mutex);
-                                    cout << "we receive that event" << endl;
+                                    lock_guard<mutex> lock(g_mutex);/*
+                                    cout << "we receive that event" << endl;*/
                                     g_cv.notify_one();
-                                }
-                                cout << "it goes out of scope" << endl;
+                                    
+                                }else if(onNotification)
+                                    onNotification(message);
+                                //cout << "it goes out of scope" << endl;
                                 return S_OK;
                             }
                         ).Get(),
@@ -142,9 +151,6 @@ private:
             });
     }
 
-    void notify(const wchar_t* msg = L"dataReady\0") {
-        PostMessageW(hWnd, WM_SEND_TO_WEBVIEW, 0, (LPARAM)_wcsdup(msg));
-    }
 
     void setupSharedMemory(bool isLeftMaster = true) {
         if (!env || !webview) return;

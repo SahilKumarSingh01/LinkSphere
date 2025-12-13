@@ -4,194 +4,113 @@
 #include <thread>
 #include <chrono>
 #include <string>
+
+#include <unordered_map>
+#include <functional>
+
 #include "NetworkManager.h"
+#include "BrowserWithMessaging.h"
+#include "MessageBlock.h"
 
 // -----------------------------------------
-// Callbacks
+// MAIN (TEST MODE: MessageBlock only)
 // -----------------------------------------
 
-void onReceive(const uint8_t* data, uint32_t size) {
-    if (size < 17) {
-        std::cout << "[RECV] Invalid message\n";
-        return;
-    }
+BrowserWithMessaging* g_browser = nullptr;
+NetworkManager* g_net = nullptr;
 
-    // Rebuild the message block
-    MessageBlock msg(data, size);
+static std::unordered_map<std::wstring, std::function<void(const std::wstring&)>> notificationHandlers;
 
-    // Extract payload
-    const uint8_t* payload = msg.getPayload();
-    uint32_t payloadSize = msg.getPayloadSize();
-
-    // Convert payload to string ONLY
-    std::string text((const char*)payload, payloadSize);
-
-    std::cout << "[RECV] " << text << std::endl;
-}
-
-
-void onError(const char* t) {
-    std::cout << "[ERR] " << t << std::endl;
-}
-
-// -----------------------------------------
-// Helper: Build a message buffer
-// -----------------------------------------
-uint8_t* makeMessage(
-    uint8_t type,
-    const std::string& srcIP,
-    uint16_t srcPort,
-    const std::string& dstIP,
-    uint16_t dstPort,
-    const std::string& payload,
-    uint32_t& outSize
+// register handler
+static void setEventHandler(
+    const std::wstring& event,
+    std::function<void(const std::wstring&)> handler
 ) {
-    uint32_t pay = payload.size();
-    outSize = pay + 17;
-
-    uint8_t* buf = new uint8_t[outSize];
-
-    // total size
-    buf[0] = (outSize >> 24) & 0xFF;
-    buf[1] = (outSize >> 16) & 0xFF;
-    buf[2] = (outSize >> 8) & 0xFF;
-    buf[3] = outSize & 0xFF;
-
-    // type
-    buf[4] = type;
-
-    // src IP
-    uint8_t sip[4];
-    sscanf_s(srcIP.c_str(), "%hhu.%hhu.%hhu.%hhu", &sip[0], &sip[1], &sip[2], &sip[3]);
-    buf[5] = sip[0]; buf[6] = sip[1]; buf[7] = sip[2]; buf[8] = sip[3];
-
-    // src port
-    buf[9] = (srcPort >> 8) & 0xFF;
-    buf[10] = srcPort & 0xFF;
-
-    // dst IP
-    uint8_t dip[4];
-    sscanf_s(dstIP.c_str(), "%hhu.%hhu.%hhu.%hhu", &dip[0], &dip[1], &dip[2], &dip[3]);
-    buf[11] = dip[0]; buf[12] = dip[1]; buf[13] = dip[2]; buf[14] = dip[3];
-
-    // dst port
-    buf[15] = (dstPort >> 8) & 0xFF;
-    buf[16] = dstPort & 0xFF;
-
-    // payload
-    memcpy(buf + 17, payload.data(), pay);
-
-    return buf;
+    notificationHandlers[event] = std::move(handler);
 }
 
-// -----------------------------------------
-// Individual Tests
-// -----------------------------------------
+// notification entry point
+void onNotification(const std::wstring& message) {
+    // split on first '-'
+    size_t pos = message.find(L'-');
 
-void testTCP(NetworkManager& net, uint16_t port) {
-    uint32_t size;
-    uint8_t* msg = makeMessage(
-        1,
-        "10.87.117.115", 0, // src
-        "127.0.0.1", port,  // dst
-        "TCP Test Message",
-        size
-    );
-    net.sendMessage(msg, size);
-}
+    if (pos != std::wstring::npos) {
+        std::wstring event = message.substr(0, pos);
+        std::wstring param = message.substr(pos + 1);
 
-void testUDP(NetworkManager& net, uint16_t port) {
-    uint32_t size;
-    std::string big(63000, 'A');
-    uint8_t* msg = makeMessage(
-        0,
-        "10.87.117.115", 5000,
-        "127.0.0.1", 5000,
-        big,
-        size
-    );
-    net.sendMessage(msg, size);
-}
-
-void testInvalidType(NetworkManager& net, uint16_t port) {
-    uint32_t size;
-    uint8_t* msg = makeMessage(
-        9,                      // invalid
-        "10.87.117.115", 0,
-        "127.0.0.1", port,
-        "InvalidType",
-        size
-    );
-    net.sendMessage(msg, size);
-}
-
-void testMissingConnection(NetworkManager& net, uint16_t port) {
-    uint32_t size;
-    uint8_t* msg = makeMessage(
-        1,
-        "8.8.8.8", 443,         // srcPort != 0 → trigger error
-        "127.0.0.1", port,
-        "ShouldFail",
-        size
-    );
-    net.sendMessage(msg, size);
-}
-
-void testSpam(NetworkManager& net, uint16_t port) {
-    for (int i = 0; i < 50; i++) {
-        uint32_t size;
-        uint8_t* msg = makeMessage(
-            1,
-            "127.0.0.1", 0,
-            "127.0.0.1", port,
-            "Spam-" + std::to_string(i),
-            size
-        );
-        net.sendMessage(msg, size);
+        auto it = notificationHandlers.find(event);
+        if (it != notificationHandlers.end()) {
+            it->second(param);
+            return;
+        }
     }
+
+    // default fallback
+    std::wcout << L"[NOTIFY] " << message << std::endl;
 }
 
-void testLarge(NetworkManager& net, uint16_t port) {
-    std::string big(40000, 'A'); // 40KB
-
-    uint32_t size;
-    uint8_t* msg = makeMessage(
-        1,
-        "127.0.0.1", 0,
-        "127.0.0.1", port,
-        big,
-        size
-    );
-    net.sendMessage(msg, size);
+// Example for raw data
+void printDataInHex(const uint8_t* data, size_t size) {
+    for (size_t i = 0; i < size; ++i) {
+        std::cout << std::hex << std::setw(2) << std::setfill('0')
+            << static_cast<int>(data[i]) << " ";
+    }
+    std::cout << std::dec << std::endl;
+}
+// Browser → MessageBlock (TEST)
+void onBrowserMessage(const BYTE* data, uint32_t size) {
+    if (g_net)
+        g_net->sendMessage(const_cast<uint8_t*>(data), size);
 }
 
-// -----------------------------------------
-// MAIN
-// -----------------------------------------
+// Network → MessageBlock (TEST)
+void onNetworkMessage(const uint8_t* data, uint32_t size) {
+    if (g_browser)
+        g_browser->sendMessage(const_cast<BYTE*>(data), size);
+}
+
+// Static function to handle errors
+void handleError(const char* text) {
+    if (!g_browser) return;
+
+    int size_needed = MultiByteToWideChar(CP_UTF8, 0, text, -1, nullptr, 0);
+    std::wstring wmsg(size_needed, 0);
+    MultiByteToWideChar(CP_UTF8, 0, text, -1, &wmsg[0], size_needed);
+    if (!wmsg.empty() && wmsg.back() == L'\0')
+        wmsg.pop_back();
+
+    g_browser->notify(wmsg.c_str());
+}
 
 int main() {
-    uint16_t port = 5000;
+    BrowserWithMessaging browser(
+        L"http://localhost:5173/testing",
+        L"LinkSphere",
+        1000,
+        700,
+        IDI_WINDOWSPROJECT1
+    );
+    g_browser = &browser;
 
-    NetworkManager net(port);
-    net.setMessageCallback(onReceive);
-    net.onError = onError;
+    NetworkManager net; // 
+    g_net = &net;
 
-    // ----------------------------
-    // CHOOSE TESTS HERE:
-    // ----------------------------
+    net.setErrorCallback(handleError);
+    net.setMessageCallback(onNetworkMessage);
+    browser.setOnReceiveCallback(onBrowserMessage);
+    browser.setOnNotificationCallback(onNotification);
 
-    testTCP(net, port);
-    //std::this_thread::sleep_for(std::chrono::seconds(10));
-    testUDP(net, port);
-    testInvalidType(net, port);
-    testMissingConnection(net, port);
-    testSpam(net, port);
-    testLarge(net, port);
+    setEventHandler(L"startTCP", [](const std::wstring& param) {
+        uint16_t port = static_cast<uint16_t>(std::stoi(param));
 
-    // Block forever
+        if (g_net&&g_net->startTCPServer(port)) {
+            if(g_browser)g_browser->notify(std::wstring(L"serverStarted-"+param).c_str());
+        }
+        });
+
     while (true) {
         std::this_thread::sleep_for(std::chrono::seconds(1));
     }
 
     return 0;
-} 
+}

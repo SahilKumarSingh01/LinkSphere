@@ -34,13 +34,14 @@ struct ConnectionContext {
 };
 
 class NetworkBase {
-public:
+protected:
     std::vector<MessageBlock*> incomingQueue;
     std::mutex incomingMutex;
     std::condition_variable incomingCV;
 
     void (*onError)(const char* text) = nullptr;
-
+public:
+   
     // --------------------------------------------------------------
     // TCP CREATE + THREADS
     // --------------------------------------------------------------
@@ -88,6 +89,9 @@ public:
             }).detach();
 
         return ctx;
+    }
+    void setErrorCallback(void (*ecb)(const char* text)) {
+        onError = ecb;
     }
 
     // --------------------------------------------------------------
@@ -187,6 +191,7 @@ protected:
                             int errCode = WSAGetLastError();
                             onError((getCtxString(ctx) + " TCP send failed. OS Error: " + getOSErrorString(errCode)).c_str());
                         }
+                        ctx->running = false;
                         break;
                     }
                     ptr += s;

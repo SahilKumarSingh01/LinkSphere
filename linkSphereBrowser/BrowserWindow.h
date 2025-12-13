@@ -4,11 +4,11 @@
 #include <WebView2.h>
 #include <string>
 #include <thread>
-#include <iostream>
+//#include <iostream>
 #include "Resource.h"
 
 using namespace Microsoft::WRL;
-using namespace std;
+//using namespace std;
 
 class BrowserWindow {
 public:
@@ -130,7 +130,7 @@ protected:
         controller = ctl;
         controller->get_CoreWebView2(&webview);
         
-        //disableBrowserFeatures(webview);                //uncomment it you stupid jdlkjfdl dskljdsklfjasljff ls
+        //disableBrowserFeatures(webview);                //uncomment it you stupid jdlkjfdl dskljdsklfjasljff ls dklfjslfjlk jskjfskjf ljdjfkldsjkflslfkljkjd kjsdkjfksjdfkdslkljfkdjf jsflsddjljl
         SetupWebViewPermissionHandler(webview);         //grant permission to all request
         // Resize WebView to window
         RECT rc;

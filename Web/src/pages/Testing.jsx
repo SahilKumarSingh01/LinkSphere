@@ -1,66 +1,48 @@
 import { useEffect, useState } from "react";
-import { MessageChannel } from "../utils/MessageChannel.js"; // your class
+import { messageHandler } from "../utils/MessageHandler.js";
 
 export default function HomePage() {
-  const [channel, setChannel] = useState(null);
   const [input, setInput] = useState("");
   const [bytes, setBytes] = useState([]);
   const [cookies, setCookies] = useState([]);
 
   useEffect(() => {
+    // message receive callback
+    messageHandler.setOnMessageReceive(
+      ({ src, srcPort, dst, dstPort, type, payload }) => {
+        console.log("From:", src.join("."), srcPort);
+        console.log("To:", dst.join("."), dstPort);
+        console.log("Type:", type);
 
-    const sharedPtr = window.chrome?.webview?.sharedBuffer;
-    if (!sharedPtr) return;
+        const arr = Array.from(payload);
+        setBytes(arr);
 
-    const arr = new Uint8Array(sharedPtr);
-    const chan = new MessageChannel(arr, arr.length, false);
-
-    setChannel(chan);
-
-    const onHostMessage = (event) => {
-      console.log(event);
-      const msg = event.data;
-      
-      if (msg === "dataReady") {
-        if (channel) {
-          console
-          const size = channel.sizeofNextMessage();
-          if (size > 0) {
-            const buf = new Uint8Array(size);
-            const read = channel.readBuf(buf, size);
-            console.log("Read from shared buffer:", buf);
-          }
-        }
-      } else {
-        console.log("[JS] Received from HOST:", msg);
+        console.log("Payload:", payload);//new TextDecoder().decode(payload));
       }
-    };
+    );
 
-    window.chrome.webview.addEventListener("message", onHostMessage);
-    // --- Log existing persistent cookies ---
+    // notification callback
+    messageHandler.setOnNotification((data) => {
+      console.log("[JS] Notification from HOST:", data);
+    });
+
+    // cookies
     const existing = getCookies();
     console.log("Existing cookies on load:", existing);
     setCookies(existing);
 
-    // --- Optional: create a persistent cookie ---
-    setPersistentCookie("myPersistentCookie", "helloWorld", 7); // lasts 7 days
-    return ()=>{
-      window.chrome.webview.removeEventListener("message", onHostMessage)
-    }
+    setPersistentCookie("myPersistentCookie", "helloWorld", 7);
   }, []);
 
   const sendToHost = () => {
-    if (!channel) return;
-    const enc = new TextEncoder();
-    const data = enc.encode(input);
-    const written = channel.writeBuf(data, data.length);
-    if (written > 0) {
-      console.log("[JS] Sent to HOST:", data);
-      setBytes([...data]);
-      window.chrome.webview.postMessage("dataReady")
-    } else {
-      console.error("Ring buffer is full — cannot write.");
-    }
+    messageHandler.sendMessage({
+      src: [127, 0, 0, 1],
+      srcPort: 0,
+      dst: [127, 0, 0, 1],
+      dstPort: 5173,
+      type: 1,
+      payload: input
+    });
   };
 
   return (
@@ -92,7 +74,8 @@ export default function HomePage() {
   );
 }
 
-// --- helpers ---
+/* ---------------- helpers ---------------- */
+
 function setPersistentCookie(name, value, days = 1) {
   const expires = new Date();
   expires.setTime(expires.getTime() + days * 24 * 60 * 60 * 1000);
@@ -100,5 +83,8 @@ function setPersistentCookie(name, value, days = 1) {
 }
 
 function getCookies() {
-  return document.cookie.split(";").map(c => c.trim()).filter(c => c);
+  return document.cookie
+    .split(";")
+    .map(c => c.trim())
+    .filter(c => c);
 }

@@ -10,8 +10,8 @@
 #include <ws2tcpip.h>
 #pragma comment(lib, "ws2_32.lib")
 
-#include <iostream>
-using namespace std;
+//#include <iostream>/*
+//using namespace std;*/
 struct ConnKey {
     uint8_t  type;     // 0 = UDP, 1 = TCP
     uint32_t srcIP;
@@ -52,14 +52,17 @@ private:
 
 
 public:
-    NetworkManager(uint16_t port) : listeningPort(port) {
+    NetworkManager(void (*mcb)(const uint8_t* data, uint32_t size)=nullptr, void (*ecb)(const char* text)=nullptr) {
+        
+        onMessageReceive=mcb;
+        onError=ecb;
         WSADATA wsa;
         if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
             if (onError) onError("WSAStartup failed");
         }
 
         dispatcherThread = std::thread([this]() { dispatcherLoop(); });
-        startTCPServer();
+        //startTCPServer();
     }
 
     ~NetworkManager() {
@@ -82,17 +85,22 @@ public:
         onMessageReceive = cb;
     }
 
-private:
-    void startTCPServer() {
+    bool startTCPServer(uint16_t port) {
+        if (serverRunning) {
+            if (listeningPort == port)
+                return true;
+            else stopTCPServer();
+        }
+
         tcpServerSock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         if (tcpServerSock == INVALID_SOCKET) {
             if (onError) onError("TCP Server: Failed to create socket");
-            return;
+            return false;
         }
 
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
-        addr.sin_port = htons(listeningPort);
+        addr.sin_port = htons(port);
         addr.sin_addr.s_addr = INADDR_ANY;
         BOOL opt = TRUE;
         setsockopt(tcpServerSock, SOL_SOCKET, SO_REUSEADDR, (char*)&opt, sizeof(opt));
@@ -100,21 +108,40 @@ private:
         if (bind(tcpServerSock, (sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
             int errCode = WSAGetLastError();
             if (onError) onError(("TCP Server bind failed. OS Error: " + getOSErrorString(errCode)).c_str());
-            return;
+            return false;
         }
         if (listen(tcpServerSock, SOMAXCONN) == SOCKET_ERROR) {
             int errCode = WSAGetLastError();
             if (onError) onError(("TCP Server listen failed. OS Error: " + getOSErrorString(errCode)).c_str());
-            return;
+            return false;
         }
-
+        listeningPort = port;
         serverRunning = true;
         tcpServerThread = std::thread([this]() { tcpAcceptLoop(); });
+        return true;
+    }
+
+private:
+    void stopTCPServer() {
+
+        serverRunning = false;
+
+        // Closing the listening socket will unblock accept()
+        if (tcpServerSock != INVALID_SOCKET) {
+            closesocket(tcpServerSock);
+            tcpServerSock = INVALID_SOCKET;
+        }
+
+        // Join the accept loop thread
+        if (tcpServerThread.joinable()) tcpServerThread.join();
+
+        listeningPort = 0;
     }
 
     void tcpAcceptLoop() {
         while (serverRunning) {
             SOCKET clientSock = accept(tcpServerSock, nullptr, nullptr);
+            if (!serverRunning) break;
             if (clientSock == INVALID_SOCKET) {
                 int errCode = WSAGetLastError();
                 if (onError) onError(("TCP accept failed. OS Error: " + getOSErrorString(errCode)).c_str());
@@ -170,6 +197,12 @@ public:
         {
             std::lock_guard<std::mutex> lock(mapMutex);
             auto it = connectionMap.find(key);
+
+            if (it != connectionMap.end() && !it->second->running) {
+                stopConnection(it->second);               // free context
+                connectionMap.erase(it);         // remove from map
+                it = connectionMap.end();        // explicitly mark as end
+            }
 
             if (it == connectionMap.end()) {
                 if (msg->getSrcPort() != 0 && msg->getType() == 1) {
@@ -237,5 +270,6 @@ public:
             if (ctx) stopConnection(ctx);
         }
         connectionMap.clear();
+        stopTCPServer();
     }
 }; 
