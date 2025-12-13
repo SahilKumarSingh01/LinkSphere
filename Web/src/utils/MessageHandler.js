@@ -11,6 +11,9 @@ class MessageHandler {
         this.onNotification = null;
           // notification event handlers
         this.notificationHandlers = new Map();
+        this.localIP=null;
+        this.port=null;
+        this.interface=null;
 
         this._init();
     }
@@ -33,8 +36,19 @@ class MessageHandler {
         );
 
         console.log("[MessageHandler] Initialized");
+        // Register automatic IpAssigned handler
+        this.setNotificationHandler("IpAssigned", (msg) => {
+            const parts = msg.split("|"); // split IP and interface
+            this.localIP = parts[0] || null;
+            this.interface = parts[1] || null;
+
+            console.log("[MessageHandler] Stored local IP:", this.localIP);
+            console.log("[MessageHandler] Interface type:", this.interface);
+        });
+
         // start server automatically
         this.port = 5173;
+        this.sendNotification("getIp-private");
         this.tryStartServer();
     }
 
