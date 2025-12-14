@@ -13,7 +13,7 @@
 //#include <iostream>/*
 //using namespace std;*/
 struct ConnKey {
-    uint8_t  type;     // 0 = UDP, 1 = TCP
+    uint8_t  type;     
     uint32_t srcIP;
     uint16_t srcPort;
     uint32_t dstIP;
@@ -213,10 +213,10 @@ public:
                     return;
                 }
 
-                if (msg->getType() == 1)
+                if (msg->getType() & 0x80)
                     ctx = createTCP(msg->getSrcString(), msg->getSrcPort(),msg->getDstString(), msg->getDstPort());
 
-                if (msg->getType() == 0)
+                else
                     ctx = createUDP(msg->getSrcString(), msg->getSrcPort(),msg->getDstString(), msg->getDstPort() );
 
                 if (!ctx) {
