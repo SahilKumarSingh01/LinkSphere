@@ -6,6 +6,8 @@
 #include "MessageChannel.h"
 
 #define WM_SEND_TO_WEBVIEW (WM_APP + 123)
+#define WM_CUSTOM_CLOSE (WM_APP + 124)
+
 using namespace std;
 class BrowserWithMessaging : public BrowserWindow {
 public:
@@ -42,6 +44,14 @@ public:
 
     }
 
+    bool isOpen() const {
+        return windowAlive;
+    }
+
+    void close() {
+        PostMessageW(hWnd, WM_CUSTOM_CLOSE, 0, NULL);
+    }
+
 
     void notify(const wchar_t* msg = L"dataReady\0") {
         PostMessageW(hWnd, WM_SEND_TO_WEBVIEW, 0, (LPARAM)_wcsdup(msg));
@@ -58,6 +68,7 @@ private:
     std::condition_variable g_cv;
     std::thread receiverThread;
     bool g_running=1;
+    bool windowAlive=true;
 
     void onContentLoading()
     {
@@ -181,6 +192,11 @@ private:
 
     LRESULT wndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) override {
         switch (msg) {
+        case WM_CUSTOM_CLOSE:
+        {
+            //cout << "custom close funtion is called \n";
+            return DefWindowProc(hWnd, WM_CLOSE, 0, 0);
+        }
         case WM_SEND_TO_WEBVIEW:
         {
             wchar_t* text = (wchar_t*)lParam;
@@ -194,8 +210,18 @@ private:
             break;
         case WM_TIMER:
             break;
+        case WM_CLOSE:
+        {
+            if (webview) {
+                webview->PostWebMessageAsString(L"close-current\0");
+            }
+            return 0;
+        }
+        break;
         case WM_DESTROY:
+            //cout << "destroy function is called\n";
             PostQuitMessage(0);
+            windowAlive = false;
             break;
         }
         return DefWindowProc(hWnd, msg, wParam, lParam);

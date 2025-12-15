@@ -20,7 +20,23 @@ export default function HomePage() {
         console.log("Payload:", payload);//new TextDecoder().decode(payload));
       }
     );
-
+    messageHandler.setNotificationHandler("close",()=>{
+      console.log("close event happened");
+      messageHandler.sendNotification("close-current");
+    })
+    // window.chrome.webview.onClosing= () => {
+    //   // navigator.sendBeacon(
+    //   //   "/offline",
+    //   //   JSON.stringify({
+    //   //     id: "user-123",
+    //   //     ts: Date.now()
+    //   //   })
+    //   // );
+    //   messageHandler.sendNotification("something");
+    // } 
+    // messageHandler.sendNotification("something");
+    // window.close();
+    // messageHandler.
     // notification callback
     messageHandler.setOnNotification((data) => {
       console.log("[JS] Notification from HOST:", data);

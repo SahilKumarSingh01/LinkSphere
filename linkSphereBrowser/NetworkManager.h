@@ -81,6 +81,29 @@ public:
         WSACleanup();
     }
 
+    bool removeConnection(
+        uint8_t type,
+        const std::string& srcIp, uint16_t srcPort,
+        const std::string& dstIp, uint16_t dstPort
+    ) {
+        uint32_t srcIP{}, dstIP{};
+        if (inet_pton(AF_INET, srcIp.c_str(), &srcIP) != 1) return false;
+        if (inet_pton(AF_INET, dstIp.c_str(), &dstIP) != 1) return false;
+
+        ConnKey key = makeKey(type, srcIP, srcPort, dstIP, dstPort);
+
+        std::lock_guard<std::mutex> lock(mapMutex);
+        auto it = connectionMap.find(key);
+        if (it == connectionMap.end())
+            return false;
+
+        if (it->second)
+            stopConnection(it->second);
+
+        connectionMap.erase(it);
+        return true;
+    }
+
     void setMessageCallback(void (*cb)(const uint8_t* data, uint32_t size)) {
         onMessageReceive = cb;
     }

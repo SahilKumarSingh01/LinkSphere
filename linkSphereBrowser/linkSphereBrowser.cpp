@@ -219,7 +219,7 @@ int main() {
      });
     setEventHandler(L"getIp", [](const std::wstring& param) {
         if (!g_browser) return;
-        cout << "this function is called\n";
+        //cout << "this function is called\n";
         std::vector<std::wstring> ips = getLocalIPs();
         for (const auto& ip : ips) {
             g_browser->notify((L"IpAssigned-" + ip).c_str());
@@ -228,7 +228,7 @@ int main() {
     // --- Mouse & Keyboard Event Handlers ---
     setEventHandler(L"mouseMove", [](const std::wstring& param) {
         int x = 0, y = 0;
-        swscanf(param.c_str(), L"%d,%d", &x, &y);
+        swscanf_s(param.c_str(), L"%d,%d", &x, &y);
         moveMouse(x, y);
         });
 
@@ -261,9 +261,35 @@ int main() {
         });
 
 
+    setEventHandler(L"removeConn", [](const std::wstring& p) {
+        if (!g_net) return;
+
+        std::wstringstream ss(p);
+        std::wstring typeStr, srcIpW, srcPortStr, dstIpW, dstPortStr;
+
+        if (!std::getline(ss, typeStr, L'-') ||
+            !std::getline(ss, srcIpW, L'-') ||
+            !std::getline(ss, srcPortStr, L'-') ||
+            !std::getline(ss, dstIpW, L'-') ||
+            !std::getline(ss, dstPortStr, L'-'))
+            return;
+
+        bool ok = g_net->removeConnection(
+            (uint8_t)std::stoi(typeStr),
+            { srcIpW.begin(), srcIpW.end() }, (uint16_t)std::stoi(srcPortStr),
+            { dstIpW.begin(), dstIpW.end() }, (uint16_t)std::stoi(dstPortStr)
+        );
+
+        if (g_browser)
+            g_browser->notify(ok ? L"connectionRemoved" : L"connectionNotFound");
+     });
+
+    setEventHandler(L"close", [](const std::wstring& param) {
+        g_browser->close();
+     });
 
 
-    while (true) {
+    while (g_browser->isOpen()) {
         std::this_thread::sleep_for(std::chrono::seconds(1));
     }
 
