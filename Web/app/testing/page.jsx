@@ -1,13 +1,15 @@
+"use client"
 import { useEffect, useState } from "react";
-import { messageHandler } from "../utils/MessageHandler.js";
+// import { messageHandler } from "@utils/MessageHandler.js";
 
 export default function HomePage() {
   const [input, setInput] = useState("");
   const [bytes, setBytes] = useState([]);
   const [cookies, setCookies] = useState([]);
 
-  useEffect(() => {
+  useEffect(async () => {
     // message receive callback
+    const {messageHandler}=await import("@utils/MessageHandler.js");
     messageHandler.setOnMessageReceive(
       ({ src, srcPort, dst, dstPort, type, payload }) => {
         console.log("From:", src.join("."), srcPort);

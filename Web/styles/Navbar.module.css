@@ -17,6 +17,7 @@
   color: #2e7d32;
   cursor: pointer;
   user-select: none;
+  text-decoration:none;
 }
 
 .iconWrapper {

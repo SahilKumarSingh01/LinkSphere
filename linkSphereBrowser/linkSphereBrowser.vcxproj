@@ -134,6 +134,9 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="buildOfflinePage.h" />
+    <ClInclude Include="getLocalIPs.h" />
+    <ClInclude Include="MouseKeyboardControls.h" />
     <ClInclude Include="framework.h" />
     <ClInclude Include="BrowserWindow.h" />
     <ClInclude Include="BrowserWithMessaging.h" />

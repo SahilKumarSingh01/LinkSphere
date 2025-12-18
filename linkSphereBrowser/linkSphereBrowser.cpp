@@ -4,205 +4,61 @@
 #include <thread>
 #include <chrono>
 #include <string>
-
 #include <unordered_map>
 #include <functional>
+#include <vector>
+#include <sstream>
 
 #include "NetworkManager.h"
 #include "BrowserWithMessaging.h"
 #include "MessageBlock.h"
-
-// -----------------------------------------
-// MAIN (TEST MODE: MessageBlock only)
-// -----------------------------------------
-#include <winsock2.h>
-#include <iphlpapi.h>
-#include <vector>
-#include <sstream>
-#pragma comment(lib, "iphlpapi.lib")
-#pragma comment(lib, "ws2_32.lib")
-
-// Helper function to get local IPs
-std::wstring getInterfaceTypeName(ULONG ifType) {
-    switch (ifType) {
-    case IF_TYPE_ETHERNET_CSMACD:   return L"Ethernet";
-    case IF_TYPE_IEEE80211:         return L"Wi-Fi";
-    case IF_TYPE_SOFTWARE_LOOPBACK: return L"Loopback";
-    case IF_TYPE_TUNNEL:            return L"Tunnel";
-    case IF_TYPE_PPP:               return L"PPP";
-    default:                        return L"Other";
-    }
-}
-void moveMouse(int x, int y) {
-    SetCursorPos(x, y);
-}
-
-void leftClick() {
-    INPUT input[2] = {};
-    input[0].type = INPUT_MOUSE;
-    input[0].mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
-
-    input[1].type = INPUT_MOUSE;
-    input[1].mi.dwFlags = MOUSEEVENTF_LEFTUP;
-
-    SendInput(2, input, sizeof(INPUT));
-}
-
-void rightClick() {
-    INPUT input[2] = {};
-    input[0].type = INPUT_MOUSE;
-    input[0].mi.dwFlags = MOUSEEVENTF_RIGHTDOWN;
-
-    input[1].type = INPUT_MOUSE;
-    input[1].mi.dwFlags = MOUSEEVENTF_RIGHTUP;
-
-    SendInput(2, input, sizeof(INPUT));
-}
-
-void scrollMouse(int amount) {
-    INPUT input = {};
-    input.type = INPUT_MOUSE;
-    input.mi.dwFlags = MOUSEEVENTF_WHEEL;
-    input.mi.mouseData = amount;
-    SendInput(1, &input, sizeof(INPUT));
-}
-
-// --- Keyboard functions ---
-void keyDown(WORD vk) {
-    INPUT input = {};
-    input.type = INPUT_KEYBOARD;
-    input.ki.wVk = vk;
-    SendInput(1, &input, sizeof(INPUT));
-}
-
-void keyUp(WORD vk) {
-    INPUT input = {};
-    input.type = INPUT_KEYBOARD;
-    input.ki.wVk = vk;
-    input.ki.dwFlags = KEYEVENTF_KEYUP;
-    SendInput(1, &input, sizeof(INPUT));
-}
-
-void keyPress(WORD vk) {
-    keyDown(vk);
-    keyUp(vk);
-}
-
-// Returns vector of wstrings: "IP|InterfaceType"
-std::vector<std::wstring> getLocalIPs() {
-    std::vector<std::wstring> ips;
-
-    WSADATA wsaData;
-    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
-        return ips;
-
-    ULONG bufferSize = 15000;
-    std::vector<char> buffer(bufferSize);
-    PIP_ADAPTER_ADDRESSES adapters = reinterpret_cast<PIP_ADAPTER_ADDRESSES>(buffer.data());
-
-    if (GetAdaptersAddresses(AF_INET, 0, nullptr, adapters, &bufferSize) == ERROR_BUFFER_OVERFLOW) {
-        buffer.resize(bufferSize);
-        adapters = reinterpret_cast<PIP_ADAPTER_ADDRESSES>(buffer.data());
-    }
-
-    if (GetAdaptersAddresses(AF_INET, 0, nullptr, adapters, &bufferSize) == NO_ERROR) {
-        for (PIP_ADAPTER_ADDRESSES adapter = adapters; adapter != nullptr; adapter = adapter->Next) {
-            if (adapter->OperStatus != IfOperStatusUp) continue;
-
-            std::wstring interfaceType = getInterfaceTypeName(adapter->IfType);
-
-            for (PIP_ADAPTER_UNICAST_ADDRESS ua = adapter->FirstUnicastAddress; ua != nullptr; ua = ua->Next) {
-                SOCKADDR_IN* sa_in = reinterpret_cast<SOCKADDR_IN*>(ua->Address.lpSockaddr);
-                char ip[INET_ADDRSTRLEN] = { 0 };
-                inet_ntop(AF_INET, &(sa_in->sin_addr), ip, INET_ADDRSTRLEN);
-
-                std::wstring wip(ip, ip + strlen(ip));
-                ips.push_back(wip + L"|" + interfaceType);
-            }
-        }
-    }
-
-    WSACleanup();
-    return ips;
-}
+#include "MouseKeyboardControls.h"
+#include "getLocalIPs.h"
+#include "buildOfflinePage.h"
 
 BrowserWithMessaging* g_browser = nullptr;
 NetworkManager* g_net = nullptr;
 
 static std::unordered_map<std::wstring, std::function<void(const std::wstring&)>> notificationHandlers;
 
-// register handler
-static void setEventHandler(
-    const std::wstring& event,
-    std::function<void(const std::wstring&)> handler
-) {
-    notificationHandlers[event] = std::move(handler);
+static void setEventHandler(const std::wstring& e, std::function<void(const std::wstring&)> h) {
+    notificationHandlers[e] = std::move(h);
 }
 
-// notification entry point
-void onNotification(const std::wstring& message) {
-    // split on first '-'
-    size_t pos = message.find(L'-');
-
-    if (pos != std::wstring::npos) {
-        std::wstring event = message.substr(0, pos);
-        std::wstring param = message.substr(pos + 1);
-
-        auto it = notificationHandlers.find(event);
-        if (it != notificationHandlers.end()) {
-            it->second(param);
-            return;
-        }
+void onNotification(const std::wstring& m) {
+    size_t p = m.find(L'-');
+    if (p != std::wstring::npos) {
+        auto it = notificationHandlers.find(m.substr(0, p));
+        if (it != notificationHandlers.end()) return it->second(m.substr(p + 1));
     }
-
-    // default fallback
-    std::wcout << L"[NOTIFY] " << message << std::endl;
+    std::wcout << L"[NOTIFY] " << m << std::endl;
 }
 
-// Example for raw data
-void printDataInHex(const uint8_t* data, size_t size) {
-    for (size_t i = 0; i < size; ++i) {
-        std::cout << std::hex << std::setw(2) << std::setfill('0')
-            << static_cast<int>(data[i]) << " ";
-    }
+void printDataInHex(const uint8_t* d, size_t s) {
+    for (size_t i = 0; i < s; ++i)
+        std::cout << std::hex << std::setw(2) << std::setfill('0') << (int)d[i] << " ";
     std::cout << std::dec << std::endl;
 }
-// Browser → MessageBlock (TEST)
-void onBrowserMessage(const BYTE* data, uint32_t size) {
-    if (g_net)
-        g_net->sendMessage(data, size);
-}
 
-// Network → MessageBlock (TEST)
-void onNetworkMessage(const uint8_t* data, uint32_t size) {
-    if (g_browser)
-        g_browser->sendMessage(data, size);
-}
+void onBrowserMessage(const BYTE* d, uint32_t s) { if (g_net) g_net->sendMessage(d, s); }
+void onNetworkMessage(const uint8_t* d, uint32_t s) { if (g_browser) g_browser->sendMessage(d, s); }
 
-// Static function to handle errors
-void handleError(const char* text) {
+void handleError(const char* t) {
     if (!g_browser) return;
-
-    int size_needed = MultiByteToWideChar(CP_UTF8, 0, text, -1, nullptr, 0);
-    std::wstring wmsg(size_needed, 0);
-    MultiByteToWideChar(CP_UTF8, 0, text, -1, &wmsg[0], size_needed);
-    if (!wmsg.empty() && wmsg.back() == L'\0')
-        wmsg.pop_back();
-
-    g_browser->notify(wmsg.c_str());
+    int sz = MultiByteToWideChar(CP_UTF8, 0, t, -1, nullptr, 0);
+    std::wstring w(sz, 0);
+    MultiByteToWideChar(CP_UTF8, 0, t, -1, &w[0], sz);
+    if (!w.empty() && w.back() == L'\0') w.pop_back();
+    g_browser->notify(w.c_str());
 }
 
 int main() {
-    BrowserWithMessaging browser(
-        L"http://localhost:5173/testing",
-        L"LinkSphere",
-        1000,
-        700,
-        IDI_WINDOWSPROJECT1
-    );
+    std::wstring url = L"http://localhost:3000/testing";
+
+    BrowserWithMessaging browser(url, L"LinkSphere", 1000, 700, IDI_WINDOWSPROJECT1);
     g_browser = &browser;
 
-    NetworkManager net; // 
+    NetworkManager net;
     g_net = &net;
 
     net.setErrorCallback(handleError);
@@ -210,88 +66,49 @@ int main() {
     browser.setOnReceiveCallback(onBrowserMessage);
     browser.setOnNotificationCallback(onNotification);
 
-    setEventHandler(L"startTCP", [](const std::wstring& param) {
-        uint16_t port = static_cast<uint16_t>(std::stoi(param));
+    setEventHandler(L"startTCP", [](const std::wstring& p) {
+        if (g_net && g_browser && g_net->startTCPServer((uint16_t)std::stoi(p)))
+            g_browser->notify((L"serverStarted-" + p).c_str());
+        });
 
-        if (g_net&&g_net->startTCPServer(port)) {
-            if(g_browser)g_browser->notify(std::wstring(L"serverStarted-"+param).c_str());
-        }
-     });
-    setEventHandler(L"getIp", [](const std::wstring& param) {
+    setEventHandler(L"getIp", [](const std::wstring&) {
         if (!g_browser) return;
-        //cout << "this function is called\n";
-        std::vector<std::wstring> ips = getLocalIPs();
-        for (const auto& ip : ips) {
-            g_browser->notify((L"IpAssigned-" + ip).c_str());
-        }
-     });
-    // --- Mouse & Keyboard Event Handlers ---
-    setEventHandler(L"mouseMove", [](const std::wstring& param) {
-        int x = 0, y = 0;
-        swscanf_s(param.c_str(), L"%d,%d", &x, &y);
-        moveMouse(x, y);
+        for (auto& ip : getLocalIPs()) g_browser->notify((L"IpAssigned-" + ip).c_str());
         });
 
-    setEventHandler(L"mouseLeft", [](const std::wstring& param) {
-        leftClick();
+    setEventHandler(L"mouseMove", [](const std::wstring& p) {
+        int x = 0, y = 0; swscanf_s(p.c_str(), L"%d,%d", &x, &y); moveMouse(x, y);
         });
 
-    setEventHandler(L"mouseRight", [](const std::wstring& param) {
-        rightClick();
-        });
-
-    setEventHandler(L"mouseScroll", [](const std::wstring& param) {
-        int amount = std::stoi(param);
-        scrollMouse(amount);
-        });
-
-    setEventHandler(L"keyDown", [](const std::wstring& param) {
-        WORD vk = static_cast<WORD>(std::stoi(param));
-        keyDown(vk);
-        });
-
-    setEventHandler(L"keyUp", [](const std::wstring& param) {
-        WORD vk = static_cast<WORD>(std::stoi(param));
-        keyUp(vk);
-        });
-
-    setEventHandler(L"keyPress", [](const std::wstring& param) {
-        WORD vk = static_cast<WORD>(std::stoi(param));
-        keyPress(vk);
-        });
-
+    setEventHandler(L"mouseLeft", [](const std::wstring&) { leftClick(); });
+    setEventHandler(L"mouseRight", [](const std::wstring&) { rightClick(); });
+    setEventHandler(L"mouseScroll", [](const std::wstring& p) { scrollMouse(std::stoi(p)); });
+    setEventHandler(L"keyDown", [](const std::wstring& p) { keyDown((WORD)std::stoi(p)); });
+    setEventHandler(L"keyUp", [](const std::wstring& p) { keyUp((WORD)std::stoi(p)); });
+    setEventHandler(L"keyPress", [](const std::wstring& p) { keyPress((WORD)std::stoi(p)); });
 
     setEventHandler(L"removeConn", [](const std::wstring& p) {
         if (!g_net) return;
-
-        std::wstringstream ss(p);
-        std::wstring typeStr, srcIpW, srcPortStr, dstIpW, dstPortStr;
-
-        if (!std::getline(ss, typeStr, L'-') ||
-            !std::getline(ss, srcIpW, L'-') ||
-            !std::getline(ss, srcPortStr, L'-') ||
-            !std::getline(ss, dstIpW, L'-') ||
-            !std::getline(ss, dstPortStr, L'-'))
-            return;
-
-        bool ok = g_net->removeConnection(
-            (uint8_t)std::stoi(typeStr),
-            { srcIpW.begin(), srcIpW.end() }, (uint16_t)std::stoi(srcPortStr),
-            { dstIpW.begin(), dstIpW.end() }, (uint16_t)std::stoi(dstPortStr)
-        );
-
+        int t, sp, dp; wchar_t sip[64]{}, dip[64]{};
+        if (swscanf_s(p.c_str(), L"%d-%63[^-]-%d-%63[^-]-%d",
+            &t, sip, (unsigned)_countof(sip),
+            &sp, dip, (unsigned)_countof(dip), &dp) != 5) return;
         if (g_browser)
-            g_browser->notify(ok ? L"connectionRemoved" : L"connectionNotFound");
-     });
+            g_browser->notify(
+                g_net->removeConnection(
+                    (uint8_t)t,
+                    { sip, sip + wcslen(sip) }, (uint16_t)sp,
+                    { dip, dip + wcslen(dip) }, (uint16_t)dp
+                ) ? L"connectionRemoved" : L"connectionNotFound"
+            );
+        });
 
-    setEventHandler(L"close", [](const std::wstring& param) {
-        g_browser->close();
-     });
+    setEventHandler(L"close", [](const std::wstring&) { if (g_browser) g_browser->close(); });
 
+    browser.setOfflinePageCallback([url](int ec) { return buildOfflinePage(url, ec); });
 
-    while (g_browser->isOpen()) {
+    while (g_browser->isOpen())
         std::this_thread::sleep_for(std::chrono::seconds(1));
-    }
 
     return 0;
 }

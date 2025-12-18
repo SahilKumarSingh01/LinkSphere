@@ -14,7 +14,7 @@ class BrowserWindow {
 public:
     BrowserWindow(
         const std::wstring& url,
-        const std::wstring& title = L"Provenix",
+        const std::wstring& title = L"Default Window",
         int width = 1000,
         int height = 700,
         int resourceId=0
@@ -65,7 +65,7 @@ protected:
 
         wc.lpfnWndProc = BrowserWindow::wndProcStatic;
         wc.hInstance = hInstance;
-        wc.lpszClassName = L"ProvenixWebViewWindow";
+        wc.lpszClassName = title.c_str();
         wc.hIcon = (HICON)LoadImage(GetModuleHandle(NULL), MAKEINTRESOURCE(resourceId), IMAGE_ICON, 32, 32, 0);         // Large icon
         wc.hIconSm = (HICON)LoadImage(GetModuleHandle(NULL), MAKEINTRESOURCE(resourceId), IMAGE_ICON, 16, 16, 0);;       // Dedicated small icon field (now available)
         wc.style = 0;               // Add styles like CS_HREDRAW | CS_VREDRAW if needed
@@ -149,7 +149,7 @@ protected:
                 [](ICoreWebView2*, ICoreWebView2PermissionRequestedEventArgs* args) {
                     COREWEBVIEW2_PERMISSION_KIND kind;
                     args->get_PermissionKind(&kind);
-                    std::cout << "this function is called" << std::endl;
+                    //std::cout << "this function is called" << std::endl;
 
                     args->put_State(COREWEBVIEW2_PERMISSION_STATE_ALLOW);
 

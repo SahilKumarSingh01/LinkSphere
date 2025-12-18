@@ -7,11 +7,13 @@
 
 #define WM_SEND_TO_WEBVIEW (WM_APP + 123)
 #define WM_CUSTOM_CLOSE (WM_APP + 124)
+#define WM_OFFLINE_PAGE_ALTER (WM_APP + 125)
 
 using namespace std;
 class BrowserWithMessaging : public BrowserWindow {
 public:
     using BinaryMessageCallback = void(*)(const BYTE* data, uint32_t size);
+    using OfflinePageCallback = std::function<std::wstring(int)>;
 
     BrowserWithMessaging(
         const std::wstring& url,
@@ -56,6 +58,12 @@ public:
     void notify(const wchar_t* msg = L"dataReady\0") {
         PostMessageW(hWnd, WM_SEND_TO_WEBVIEW, 0, (LPARAM)_wcsdup(msg));
     }
+
+    void setOfflinePageCallback(OfflinePageCallback callback){
+        offlinePageCallback = callback;
+        PostMessageW(hWnd, WM_OFFLINE_PAGE_ALTER, (WPARAM)(callback ? TRUE : FALSE), 0);
+    }
+
 private:
 
     wil::com_ptr<ICoreWebView2SharedBuffer> sharedBuffer;
@@ -63,6 +71,7 @@ private:
 
     std::unique_ptr<MessageChannel> channel;
     BinaryMessageCallback onReceive = nullptr;
+    OfflinePageCallback offlinePageCallback;
     void (*onNotification)(const std::wstring&) = nullptr;
     std::mutex g_mutex;
     std::condition_variable g_cv;
@@ -128,11 +137,47 @@ private:
 
         HRESULT result = BrowserWindow::onWebViewControllerCreated(hr, ctl);
         if (FAILED(result)) return result;
-
+        setupNavigationHandler(webview);
+        setOfflinePageCallback(offlinePageCallback);        /// it retrigger the logic if it get missed initially when webview was not ready
         onContentLoading();         //passed shared memory buffer;
-
+        //cout << "on webviewControllerCreated is running multiple times" << endl;
         return result;
     }
+
+    BOOL setupNavigationHandler(wil::com_ptr<ICoreWebView2>& webview)
+    {
+        webview->add_NavigationCompleted(
+            Callback<ICoreWebView2NavigationCompletedEventHandler>(
+                [this](ICoreWebView2* sender,
+                    ICoreWebView2NavigationCompletedEventArgs* args) -> HRESULT{
+
+                    BOOL isSuccess = FALSE;
+                    args->get_IsSuccess(&isSuccess);
+                    COREWEBVIEW2_WEB_ERROR_STATUS errorStatus;
+                    if (!isSuccess && offlinePageCallback) {
+                        args->get_WebErrorStatus(&errorStatus);
+                        LPWSTR currentUri = nullptr;
+                        sender->get_Source(&currentUri);
+                        std::wstring uriString(currentUri);
+                        CoTaskMemFree(currentUri); 
+                        if (uriString == this->url) {
+
+                            std::wstring html =
+                                offlinePageCallback(static_cast<int>(errorStatus));
+                            //std::cout << "here we are actually attacking it " << std::endl;
+                            sender->NavigateToString(html.c_str());
+                        }
+
+                    }
+                    //std::cout << "on navigation completed function is called\n" << errorStatus << "\n";
+
+                    return S_OK;
+                }).Get(),
+                    nullptr//navCompletedToken
+                    );
+        return false;
+    }
+
 
     void startReceiverThread() {
         g_running = 1;
@@ -162,6 +207,7 @@ private:
             });
     }
 
+ 
 
     void setupSharedMemory(bool isLeftMaster = true) {
         if (!env || !webview) return;
@@ -206,6 +252,17 @@ private:
             free(text);
             break;
         }
+        case WM_OFFLINE_PAGE_ALTER:
+        {
+            if (!webview)
+                break;
+            BOOL isSet = (BOOL)wParam;
+            Microsoft::WRL::ComPtr<ICoreWebView2Settings> settings;
+            if (SUCCEEDED(webview->get_Settings(&settings))) {
+                settings->put_IsBuiltInErrorPageEnabled(isSet ? FALSE : TRUE);
+            }
+        }
+            break;
         case WM_SIZE:
             break;
         case WM_TIMER:

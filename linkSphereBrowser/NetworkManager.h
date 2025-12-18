@@ -208,13 +208,15 @@ public:
 
         MessageBlock* msg = new MessageBlock(rawData, size);
 
+        uint8_t type8 = (msg->getType() >> 7) & 1;
         ConnKey key = makeKey(
-            msg->getType(),
+            type8,
             msg->getSrcIP(),
             msg->getSrcPort(),
-            msg->getDstIP(),
-            msg->getDstPort()
+            type8 ? msg->getDstIP() : 0,
+            type8 ? msg->getDstPort() : 0
         );
+
 
         ConnectionContext* ctx = nullptr;
         {

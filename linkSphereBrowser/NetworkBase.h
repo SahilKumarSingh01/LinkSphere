@@ -317,18 +317,17 @@ protected:
         ctx->running = false;
         ctx->outgoingCV.notify_all();
 
-        if (ctx->sock != INVALID_SOCKET) {
-            shutdown(ctx->sock, SD_BOTH);
-            closesocket(ctx->sock);
-            ctx->sock = INVALID_SOCKET;
-        }
+        if (ctx->sock != INVALID_SOCKET) shutdown(ctx->sock, SD_BOTH);
 
         if (ctx->senderThread.joinable()) ctx->senderThread.join();
         if (ctx->receiverThread.joinable()) ctx->receiverThread.join();
 
-        for (MessageBlock* msg : ctx->outgoingQueue) delete msg;
+        if (ctx->sock != INVALID_SOCKET) { closesocket(ctx->sock); ctx->sock = INVALID_SOCKET; }
+
+        for (auto msg : ctx->outgoingQueue) delete msg;
         ctx->outgoingQueue.clear();
 
         delete ctx;
     }
+
 };
