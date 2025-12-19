@@ -1,16 +1,20 @@
-"use client"
+"use client";
+
 import { useEffect, useState } from "react";
-// import { messageHandler } from "@utils/MessageHandler.js";
+import { useMessageHandler } from "@context/MessageHandler.jsx";
 
 export default function HomePage() {
+  const messageHandler = useMessageHandler();
+
   const [input, setInput] = useState("");
   const [bytes, setBytes] = useState([]);
   const [cookies, setCookies] = useState([]);
+  // console.log("hellow how are you ",messageHandler);
+  useEffect(() => {
+    if (!messageHandler) return;
 
-  useEffect(async () => {
     // message receive callback
-    const {messageHandler}=await import("@utils/MessageHandler.js");
-    messageHandler.setOnMessageReceive(
+    messageHandler.setOnMessageReceive(1,
       ({ src, srcPort, dst, dstPort, type, payload }) => {
         console.log("From:", src.join("."), srcPort);
         console.log("To:", dst.join("."), dstPort);
@@ -19,27 +23,17 @@ export default function HomePage() {
         const arr = Array.from(payload);
         setBytes(arr);
 
-        console.log("Payload:", payload);//new TextDecoder().decode(payload));
+        console.log("Payload:", payload);
       }
     );
-    messageHandler.setNotificationHandler("close",()=>{
+
+    // native close event
+    messageHandler.setNotificationHandler("close", () => {
       console.log("close event happened");
       messageHandler.sendNotification("close-current");
-    })
-    // window.chrome.webview.onClosing= () => {
-    //   // navigator.sendBeacon(
-    //   //   "/offline",
-    //   //   JSON.stringify({
-    //   //     id: "user-123",
-    //   //     ts: Date.now()
-    //   //   })
-    //   // );
-    //   messageHandler.sendNotification("something");
-    // } 
-    // messageHandler.sendNotification("something");
-    // window.close();
-    // messageHandler.
-    // notification callback
+    });
+
+    // generic notification callback
     messageHandler.setOnNotification((data) => {
       console.log("[JS] Notification from HOST:", data);
     });
@@ -50,16 +44,18 @@ export default function HomePage() {
     setCookies(existing);
 
     setPersistentCookie("myPersistentCookie", "helloWorld", 7);
-  }, []);
+  }, [messageHandler]);
 
   const sendToHost = () => {
+    if (!messageHandler) return;
+
     messageHandler.sendMessage({
       src: [127, 0, 0, 1],
-      srcPort: 0,
+      srcPort: 3000,
       dst: [127, 0, 0, 1],
-      dstPort: 5173,
-      type: 1,
-      payload: input
+      dstPort: 3000,
+      type: 1, // TCP
+      payload: input,
     });
   };
 

@@ -292,7 +292,7 @@ protected:
     void udpReceiver(ConnectionContext* ctx) {
         const int bufferSize = 1024 * 64;
         uint8_t* buffer = new uint8_t[bufferSize];
-
+    
         sockaddr_in from{};
         int fromLen = sizeof(from);
 
@@ -309,6 +309,7 @@ protected:
         }
 
         delete[] buffer;
+
     }
 
     void stopConnection(ConnectionContext* ctx) {

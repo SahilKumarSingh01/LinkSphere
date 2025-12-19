@@ -79,9 +79,8 @@ private:
     bool g_running=1;
     bool windowAlive=true;
 
-    void onContentLoading()
+    void initilizeMessageChannel()
     {
-        EventRegistrationToken navToken;
         webview->add_ContentLoading(
             Callback<ICoreWebView2ContentLoadingEventHandler>(
                 [this](ICoreWebView2* sender, ICoreWebView2ContentLoadingEventArgs*) -> HRESULT{
@@ -98,37 +97,37 @@ private:
                             // Initialize shared memory once script is injected
                             this->setupSharedMemory(true);
                             return S_OK;
-                        }).Get()
-                    );
-
-                    // Listen for messages from JS
-                    this->webview->add_WebMessageReceived(
-                        Callback<ICoreWebView2WebMessageReceivedEventHandler>(
-                            [this](ICoreWebView2*, ICoreWebView2WebMessageReceivedEventArgs* args) -> HRESULT
-                            {
-                                wil::unique_cotaskmem_string msg;
-                                args->TryGetWebMessageAsString(&msg);
-
-                                std::wstring message(msg.get());
-                                if (message == L"dataReady") {
-                                    // Notify the receiver thread that new data is available
-                                    lock_guard<mutex> lock(g_mutex);/*
-                                    cout << "we receive that event" << endl;*/
-                                    g_cv.notify_one();
-                                    
-                                }else if(onNotification)
-                                    onNotification(message);
-                                //cout << "it goes out of scope" << endl;
-                                return S_OK;
-                            }
-                        ).Get(),
-                        nullptr
-                    );
+                            }).Get()
+                         );
 
                     return S_OK;
                 }
             ).Get(),
-            &navToken
+            NULL
+        );
+        // Listen for messages from JS
+        this->webview->add_WebMessageReceived(
+            Callback<ICoreWebView2WebMessageReceivedEventHandler>(
+                [this](ICoreWebView2*, ICoreWebView2WebMessageReceivedEventArgs* args) -> HRESULT
+                {
+                    wil::unique_cotaskmem_string msg;
+                    args->TryGetWebMessageAsString(&msg);
+
+                    std::wstring message(msg.get());
+                    if (message == L"dataReady") {
+                        // Notify the receiver thread that new data is available
+                        lock_guard<mutex> lock(g_mutex);/*
+                        cout << "we receive that event" << endl;*/
+                        g_cv.notify_one();
+
+                    }
+                    else if (onNotification)
+                        onNotification(message);
+                    //cout << "it goes out of scope" << endl;
+                    return S_OK;
+                }
+            ).Get(),
+            nullptr
         );
     }
 
@@ -139,7 +138,7 @@ private:
         if (FAILED(result)) return result;
         setupNavigationHandler(webview);
         setOfflinePageCallback(offlinePageCallback);        /// it retrigger the logic if it get missed initially when webview was not ready
-        onContentLoading();         //passed shared memory buffer;
+        initilizeMessageChannel();         //passed shared memory buffer;
         //cout << "on webviewControllerCreated is running multiple times" << endl;
         return result;
     }

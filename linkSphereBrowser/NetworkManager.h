@@ -230,7 +230,7 @@ public:
             }
 
             if (it == connectionMap.end()) {
-                if (msg->getSrcPort() != 0 && msg->getType() == 1) {
+                if (msg->getSrcPort() != 0 && (msg->getType() & 0x80) == 1) {
                     if (onError) onError((
                         "No active TCP connection for " +msg->getSrcString() + ":" + std::to_string(msg->getSrcPort()) +
                         " -> " +msg->getDstString() + ":" + std::to_string(msg->getDstPort())).c_str());

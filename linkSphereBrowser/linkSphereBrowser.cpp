@@ -26,12 +26,13 @@ static void setEventHandler(const std::wstring& e, std::function<void(const std:
 }
 
 void onNotification(const std::wstring& m) {
+    std::wcout << L"[NOTIFY] " << m << std::endl;
     size_t p = m.find(L'-');
     if (p != std::wstring::npos) {
         auto it = notificationHandlers.find(m.substr(0, p));
         if (it != notificationHandlers.end()) return it->second(m.substr(p + 1));
     }
-    std::wcout << L"[NOTIFY] " << m << std::endl;
+    //std::wcout << L"[NOTIFY] " << m << std::endl;
 }
 
 void printDataInHex(const uint8_t* d, size_t s) {
@@ -40,8 +41,8 @@ void printDataInHex(const uint8_t* d, size_t s) {
     std::cout << std::dec << std::endl;
 }
 
-void onBrowserMessage(const BYTE* d, uint32_t s) { if (g_net) g_net->sendMessage(d, s); }
-void onNetworkMessage(const uint8_t* d, uint32_t s) { if (g_browser) g_browser->sendMessage(d, s); }
+void onBrowserMessage(const BYTE* d, uint32_t s) { if (g_net) g_net->sendMessage(d, s); cout << "message receive from browser" << endl; }
+void onNetworkMessage(const uint8_t* d, uint32_t s) { if (g_browser) g_browser->sendMessage(d, s); cout << "message send to browser" << endl; }
 
 void handleError(const char* t) {
     if (!g_browser) return;
