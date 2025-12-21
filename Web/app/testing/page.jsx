@@ -1,104 +1,140 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useMessageHandler } from "@context/MessageHandler.jsx";
+import { useState } from "react";
+import axios from "axios";
 
-export default function HomePage() {
-  const messageHandler = useMessageHandler();
+const PROJECT_ID = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
+const API_KEY = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
 
-  const [input, setInput] = useState("");
-  const [bytes, setBytes] = useState([]);
-  const [cookies, setCookies] = useState([]);
-  // console.log("hellow how are you ",messageHandler);
-  useEffect(() => {
-    if (!messageHandler) return;
+export default function Home() {
+  const [customToken, setCustomToken] = useState(null);
+  const [idToken, setIdToken] = useState(null);
+  const [refreshToken, setRefreshToken] = useState(null);
+  const [refreshUserId, setRefreshUserId] = useState(null);
+  const [data, setData] = useState(null);
 
-    // message receive callback
-    messageHandler.setOnMessageReceive(1,
-      ({ src, srcPort, dst, dstPort, type, payload }) => {
-        console.log("From:", src.join("."), srcPort);
-        console.log("To:", dst.join("."), dstPort);
-        console.log("Type:", type);
+  // 1️⃣ Get custom token
+  async function handleGetCustomToken() {
+    try {
+      const res = await axios.get("/api/token");
+      setCustomToken(res.data.token);
+    } catch (err) {
+      console.error(err.response?.data || err);
+    }
+  }
 
-        const arr = Array.from(payload);
-        setBytes(arr);
+  // 2️⃣ Exchange custom token → ID token
+  async function handleExchangeToken() {
+    try {
+      const res = await axios.post(
+        `https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${API_KEY}`,
+        {
+          token: customToken,
+          returnSecureToken: true,
+        }
+      );
+      console.log(res);
+      setIdToken(res.data.idToken);
+      setRefreshToken(res.data.refreshToken);
+    } catch (err) {
+      console.error(err.response?.data || err);
+    }
+  }
 
-        console.log("Payload:", payload);
-      }
-    );
+  // 3️⃣ Update Firestore doc
+  async function handleUpdateMyData() {
+    if (!idToken) return;
 
-    // native close event
-    messageHandler.setNotificationHandler("close", () => {
-      console.log("close event happened");
-      messageHandler.sendNotification("close-current");
-    });
+    try {
+      const res = await axios.patch(
+        `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/some_collection/test-user-124?updateMask.fieldPaths=lastSeen`,
+        {
+          fields: {
+            lastSeen: { timestampValue: new Date().toISOString() },
+          },
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${idToken}`,
+            "Content-Type": "application/json",
+          },
+        }
+      );
 
-    // generic notification callback
-    messageHandler.setOnNotification((data) => {
-      console.log("[JS] Notification from HOST:", data);
-    });
+      setData(res.data);
+      console.log("Last seen updated:", res.data);
+    } catch (err) {
+      console.error("Failed to update lastSeen:", err.response?.data || err);
+    }
+  }
 
-    // cookies
-    const existing = getCookies();
-    console.log("Existing cookies on load:", existing);
-    setCookies(existing);
+  // 4️⃣ Fetch all users
+  async function handleFetchAll() {
+    if (!idToken) return;
 
-    setPersistentCookie("myPersistentCookie", "helloWorld", 7);
-  }, [messageHandler]);
+    try {
+      const res = await axios.get(
+        `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/some_collection`,
+        {
+          headers: {
+            Authorization: `Bearer ${idToken}`,
+          },
+        }
+      );
+      console.log(res.data);
+      setData(res.data);
+    } catch (err) {
+      console.error(err.response?.data || err);
+    }
+  }
 
-  const sendToHost = () => {
-    if (!messageHandler) return;
+  // 5️⃣ Refresh ID token using refresh token
+  async function handleRefreshIdToken() {
+    if (!refreshToken) return;
 
-    messageHandler.sendMessage({
-      src: [127, 0, 0, 1],
-      srcPort: 3000,
-      dst: [127, 0, 0, 1],
-      dstPort: 3000,
-      type: 1, // TCP
-      payload: input,
-    });
-  };
+    try {
+      const params = new URLSearchParams();
+      params.append("grant_type", "refresh_token");
+      params.append("refresh_token", refreshToken);
+
+      const res = await axios.post(
+        `https://securetoken.googleapis.com/v1/token?key=${API_KEY}`,
+        params,
+        {
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        }
+      );
+
+      console.log("Refresh response:", res.data);
+      setIdToken(res.data.id_token);        // update ID token
+      setRefreshToken(res.data.refresh_token); // update refresh token if changed
+      setRefreshUserId(res.data.user_id);   // store user ID
+    } catch (err) {
+      console.error("Failed to refresh ID token:", err.response?.data || err);
+    }
+  }
 
   return (
-    <div style={{ padding: 30 }}>
-      <h2>SharedBuffer Messaging + Cookies 😸</h2>
-
-      <input
-        value={input}
-        onChange={(e) => setInput(e.target.value)}
-        placeholder="Type something…"
-        style={{ padding: 10, width: 250 }}
-      />
-
-      <button
-        onClick={sendToHost}
-        style={{ marginLeft: 10, padding: "10px 20px" }}
-      >
-        Send
+    <div style={{ padding: 20 }}>
+      <button onClick={handleGetCustomToken}>1️⃣ Get Custom Token</button>
+      <button onClick={handleExchangeToken} disabled={!customToken}>
+        2️⃣ Exchange for ID Token
+      </button>
+      <button onClick={handleUpdateMyData} disabled={!idToken}>
+        3️⃣ Update My Last Seen
+      </button>
+      <button onClick={handleFetchAll} disabled={!idToken}>
+        4️⃣ Fetch All Users
+      </button>
+      <button onClick={handleRefreshIdToken} disabled={!refreshToken}>
+        5️⃣ Refresh ID Token
       </button>
 
-      <div style={{ marginTop: 20 }}>
-        <h3>Byte Data Output:</h3>
-        <pre>{JSON.stringify(bytes, null, 2)}</pre>
-
-        <h3>Persistent Cookies:</h3>
-        <pre>{JSON.stringify(cookies, null, 2)}</pre>
-      </div>
+      <pre>Custom Token: {customToken}</pre>
+      <pre>ID Token: {idToken}</pre>
+      <pre>Refresh Token: {refreshToken}</pre>
+      <pre>User ID from Refresh: {refreshUserId}</pre>
+      <pre>{JSON.stringify(data, null, 2)}</pre>
     </div>
   );
-}
-
-/* ---------------- helpers ---------------- */
-
-function setPersistentCookie(name, value, days = 1) {
-  const expires = new Date();
-  expires.setTime(expires.getTime() + days * 24 * 60 * 60 * 1000);
-  document.cookie = `${name}=${value}; expires=${expires.toUTCString()}; path=/`;
-}
-
-function getCookies() {
-  return document.cookie
-    .split(";")
-    .map(c => c.trim())
-    .filter(c => c);
 }
