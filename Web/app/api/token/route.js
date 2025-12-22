@@ -1,6 +1,7 @@
 import 'server-only'
 import admin from "firebase-admin";
-
+import { NextRequest } from 'next/server';
+export const runtime = "nodejs";
 if (!admin.apps.length) {
   admin.initializeApp({
     credential: admin.credential.cert({
@@ -19,21 +20,43 @@ if (!admin.apps.length) {
   });
 }
 
-export async function GET() {
+export async function POST(req) {
   try {
-    const uid = "test-user-124";
-
+     console.log("backend called");
+    const ip =
+    req.headers.get("x-forwarded-for")?.split(",")[0] || req.headers.get("x-real-ip") ||"unknown";
+    const body=await req.json();
+    let {privateIP,organisationName}= body;
+    
+    if(!privateIP || !organisationName)
+    {
+       return new Response(
+         "PrivateIP And organisationName Needed",
+         {
+          status:400,
+          headers:{"Content-Type":"application/json"}
+         }
+       );
+    }
+    organisationName=organisationName.toLowerCase();
+    
+    //console.log("ip:",ip," privateIP:",privateIP," organisationName:",organisationName);
+    const uid = privateIP+":"+ip;
+    
     // 1️⃣ Create custom token
     const customToken = await admin.auth().createCustomToken(uid);
 
     // 2️⃣ Create Firestore document immediately
-    const userRef = admin.firestore().collection("some_collection").doc(uid);
+    const userRef = admin.firestore().collection("organisation").doc(organisationName).collection("lastSeen").doc(uid);
     await userRef.set({
       lastSeen: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true }); // merge: true ensures we don't overwrite existing fields
 
     return new Response(
-      JSON.stringify({ token: customToken }),
+      JSON.stringify({ 
+        token: customToken,
+        userId:uid
+       }),
       {
         status: 200,
         headers: { "Content-Type": "application/json" },

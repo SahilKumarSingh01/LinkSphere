@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import axios from "axios";
+import os from "os";
 
 const PROJECT_ID = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
 const API_KEY = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
@@ -12,12 +13,32 @@ export default function Home() {
   const [refreshToken, setRefreshToken] = useState(null);
   const [refreshUserId, setRefreshUserId] = useState(null);
   const [data, setData] = useState(null);
+  const [userId,setUserId]=useState(null);
+  const [organisationName,setOrganisationName]=useState("mnnit") // setting organisation name default mnnit
+  const [privateIP,setPrivateIP]=useState("127.1.2.2");
 
+
+  
   // 1️⃣ Get custom token
   async function handleGetCustomToken() {
-    try {
-      const res = await axios.get("/api/token");
+    try { 
+       
+      //setPrivateIP(getPrivateIp());
+      console.log("called:",privateIP);
+
+      if(!privateIP || !organisationName)
+      {
+        return;
+      }
+      const data={
+        organisationName,
+        privateIP
+      }
+      const res = await axios.post("/api/token",data);
+
       setCustomToken(res.data.token);
+      setUserId(res.data.userId);
+      console.log("res:",res);
     } catch (err) {
       console.error(err.response?.data || err);
     }
@@ -47,7 +68,7 @@ export default function Home() {
 
     try {
       const res = await axios.patch(
-        `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/some_collection/test-user-124?updateMask.fieldPaths=lastSeen`,
+        `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/organisation/${organisationName}/lastSeen/${userId}?updateMask.fieldPaths=lastSeen`,
         {
           fields: {
             lastSeen: { timestampValue: new Date().toISOString() },
@@ -74,7 +95,7 @@ export default function Home() {
 
     try {
       const res = await axios.get(
-        `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/some_collection`,
+        `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/organisation/${organisationName}/lastSeen`,
         {
           headers: {
             Authorization: `Bearer ${idToken}`,
