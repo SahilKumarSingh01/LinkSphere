@@ -12,9 +12,10 @@ export default class MessageHandler {
         this.onNotification = null;
           // notification event handlers
         this.notificationHandlers = new Map();
-        this.localIP=null;
         this.port=null;
-        this.interface=null;
+        this.localIPs = [];
+        this.defaultIP = null; // stores { ip, interface }
+
 
         this._init();
 
@@ -40,45 +41,59 @@ export default class MessageHandler {
         console.log("[MessageHandler] Initialized");
         // Register automatic IpAssigned handler
         this.setNotificationHandler("IpAssigned", (msg) => {
-            const parts = msg.split("|"); // split IP and interface
-            this.localIP = parts[0] || null;
-            this.interface = parts[1] || null;
+            const [ip, iface] = msg.split("|");
+            if (!ip || this.localIPs.some(e => e.ip === ip)) return;
 
-            console.log("[MessageHandler] Stored local IP:", this.localIP);
-            console.log("[MessageHandler] Interface type:", this.interface);
+            const obj = { ip, interface: iface || null };
+            this.localIPs.push(obj);
+            if (!this.defaultIP) this.defaultIP = obj;
         });
+
 
         // start server automatically
         this.port = 5173;
         this.sendNotification("getIp-private");
         this.tryStartServer();
     }
+    getAllIPs() {
+        return this.localIPs;
+    }
+    getDefaultIP() {
+        return this.defaultIP;
+    }
+    setDefaultIP(index) {
+        if (index < 0 || index >= this.localIPs.length) return false;
+        this.defaultIP = this.localIPs[index];
+        return true;
+    }
+
 
     tryStartServer() {
         const port = this.port;
 
-        // set temporary handler for this attempt
+        const cleanup = () => {
+            this.notificationHandlers.delete("serverStarted");
+            this.notificationHandlers.delete("serverFailed");
+        };
+
         this.setNotificationHandler("serverStarted", (param) => {
             if (param === String(port)) {
                 console.log(`[MessageHandler] Server started at port ${port}`);
-                // remove this handler after success
-                this.notificationHandlers.delete("serverStarted");
+                cleanup();
             }
         });
 
-        // send request using existing sendNotification
-        this.sendNotification(`startTCP-${port}`);
-
-        // retry after 100ms if server hasn't started
-        setTimeout(() => {
-            // check if handler still exists → means no success yet
-            if (this.notificationHandlers.has("serverStarted")) {
-                this.notificationHandlers.delete("serverStarted");
-                this.port++; // try next port
-                this.tryStartServer();
+        this.setNotificationHandler("serverFailed", (param) => {
+            if (param === String(port)) {
+                cleanup();
+                this.port++;
+                setTimeout(() => this.tryStartServer(), 0);
             }
-        }, 100);
+        });
+
+        this.sendNotification(`startTCP-${port}`);
     }
+
 
     /* ---------------- HOST → JS ---------------- */
 
@@ -112,7 +127,7 @@ export default class MessageHandler {
             try {
                 const block = new MessageBlock(buf);
                 const handler = this.onMessageReceiveHandler.get(block.getType());
-                if(!handler)return;
+                if(!handler)continue;
                 handler({
                     src: [
                         (block.getSrcIP() >>> 24) & 0xFF,

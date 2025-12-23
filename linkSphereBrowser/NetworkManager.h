@@ -37,7 +37,7 @@ private:
     SOCKET tcpServerSock = INVALID_SOCKET;
     std::thread tcpServerThread;
     std::atomic<bool> serverRunning{ false };
-    uint16_t listeningPort;
+    uint16_t listeningPort{ 0 };
 
 private:
     ConnKey makeKey(uint8_t t, uint32_t srcIP, uint16_t sp, uint32_t dstIP, uint16_t dp) {
@@ -89,8 +89,11 @@ public:
         uint32_t srcIP{}, dstIP{};
         if (inet_pton(AF_INET, srcIp.c_str(), &srcIP) != 1) return false;
         if (inet_pton(AF_INET, dstIp.c_str(), &dstIP) != 1) return false;
-
-        ConnKey key = makeKey(type, srcIP, srcPort, dstIP, dstPort);
+        uint8_t type8 = (type >> 7) & 1;
+        ConnKey key = makeKey(type8, srcIP, srcPort,
+            type8 ? dstIP : 0,
+            type8 ? dstPort : 0);
+        //ConnKey key = makeKey(type, srcIP, srcPort, dstIP, dstPort);
 
         std::lock_guard<std::mutex> lock(mapMutex);
         auto it = connectionMap.find(key);
@@ -203,71 +206,56 @@ private:
     }
 
 public:
-    void sendMessage(const BYTE* rawData, uint32_t size) {
-        if (size < 17) return;
-
+    bool sendMessage(const BYTE* rawData, uint32_t size) {
+        if (size < 17) return false;
         MessageBlock* msg = new MessageBlock(rawData, size);
-
         uint8_t type8 = (msg->getType() >> 7) & 1;
-        ConnKey key = makeKey(
-            type8,
-            msg->getSrcIP(),
-            msg->getSrcPort(),
+        ConnKey key = makeKey(type8, msg->getSrcIP(), msg->getSrcPort(),
             type8 ? msg->getDstIP() : 0,
-            type8 ? msg->getDstPort() : 0
-        );
-
-
+            type8 ? msg->getDstPort() : 0);
         ConnectionContext* ctx = nullptr;
         {
             std::lock_guard<std::mutex> lock(mapMutex);
             auto it = connectionMap.find(key);
-
             if (it != connectionMap.end() && !it->second->running) {
-                stopConnection(it->second);               // free context
-                connectionMap.erase(it);         // remove from map
-                it = connectionMap.end();        // explicitly mark as end
+                stopConnection(it->second);
+                connectionMap.erase(it);
+                it = connectionMap.end();
             }
-
             if (it == connectionMap.end()) {
                 if (msg->getSrcPort() != 0 && (msg->getType() & 0x80) == 1) {
                     if (onError) onError((
-                        "No active TCP connection for " +msg->getSrcString() + ":" + std::to_string(msg->getSrcPort()) +
-                        " -> " +msg->getDstString() + ":" + std::to_string(msg->getDstPort())).c_str());
-                    delete msg;
-                    return;
-                }
-
-                if (msg->getType() & 0x80)
-                    ctx = createTCP(msg->getSrcString(), msg->getSrcPort(),msg->getDstString(), msg->getDstPort());
-
-                else
-                    ctx = createUDP(msg->getSrcString(), msg->getSrcPort(),msg->getDstString(), msg->getDstPort() );
-
-                if (!ctx) {
-                    if (onError) onError((
-                        "Failed to create connection for " +msg->getSrcString() + ":" + std::to_string(msg->getSrcPort()) +
-                        " -> " +msg->getDstString() + ":" + std::to_string(msg->getDstPort())
+                        "No active TCP connection for " + msg->getSrcString() + ":" +
+                        std::to_string(msg->getSrcPort()) + " -> " +
+                        msg->getDstString() + ":" + std::to_string(msg->getDstPort())
                         ).c_str());
                     delete msg;
-                    return;
+                    return false;
                 }
-
-
-
+                ctx = (msg->getType() & 0x80) ?
+                    createTCP(msg->getSrcString(), msg->getSrcPort(),msg->getDstString(), msg->getDstPort()) :
+                    createUDP(msg->getSrcString(), msg->getSrcPort(),msg->getDstString(), msg->getDstPort());
+                if (!ctx) {
+                    if (onError) onError((
+                        "Failed to create connection for " + msg->getSrcString() + ":" +
+                        std::to_string(msg->getSrcPort()) + " -> " +
+                        msg->getDstString() + ":" + std::to_string(msg->getDstPort())
+                        ).c_str());
+                    delete msg;
+                    return false;
+                }
                 connectionMap[key] = ctx;
             }
-            else {
-                ctx = it->second;
-            }
+            else ctx = it->second;
         }
-        
         {
             std::lock_guard<std::mutex> lock(ctx->outgoingMutex);
             ctx->outgoingQueue.push_back(msg);
         }
         ctx->outgoingCV.notify_one();
+        return true;
     }
+
 
 private:
     void dispatcherLoop() {

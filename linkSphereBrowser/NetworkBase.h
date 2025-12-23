@@ -41,7 +41,10 @@ protected:
 
     void (*onError)(const char* text) = nullptr;
 public:
-   
+    void setErrorCallback(void (*ecb)(const char* text)) {
+        onError = ecb;
+    }
+
     // --------------------------------------------------------------
     // TCP CREATE + THREADS
     // --------------------------------------------------------------
@@ -51,11 +54,22 @@ public:
         SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         if (s == INVALID_SOCKET) {
             if (onError) {
-                std::string err =
-                    "Failed to create TCP socket [Src: " + srcIP + ":" + std::to_string(srcPort) +
-                    " Dest: " + destIP + ":" + std::to_string(destPort) + "]";
-                onError(err.c_str());
+                onError("Failed to create TCP socket");
             }
+            return nullptr;
+        }
+
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(destPort);
+        inet_pton(AF_INET, destIP.c_str(), &addr.sin_addr);
+
+        if (connect(s, (sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
+            if (onError) {
+                int errCode = WSAGetLastError();
+                onError(("TCP connect failed. OS Error: " + getOSErrorString(errCode)).c_str());
+            }
+            closesocket(s);
             return nullptr;
         }
 
@@ -67,81 +81,59 @@ public:
         ctx->sock = s;
         ctx->isTCP = true;
         ctx->isClient = true;
+        ctx->running = true;
 
-        std::thread([this, ctx]() {
-            sockaddr_in addr{};
-            addr.sin_family = AF_INET;
-            addr.sin_port = htons(ctx->destPort);
-            inet_pton(AF_INET, ctx->destIP.c_str(), &addr.sin_addr);
-
-            if (connect(ctx->sock, (sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
-                if (onError) {
-                    int errCode = WSAGetLastError();
-                    onError((getCtxString(ctx) + " TCP connect failed. OS Error: " + getOSErrorString(errCode)).c_str());
-                }
-                ctx->running = false;
-                return;
-            }
-
-            ctx->senderThread = std::thread([this, ctx]() { tcpSender(ctx); });
-            ctx->receiverThread = std::thread([this, ctx]() { tcpReceiver(ctx); });
-
-            }).detach();
+        ctx->senderThread = std::thread([this, ctx]() { tcpSender(ctx); });
+        ctx->receiverThread = std::thread([this, ctx]() { tcpReceiver(ctx); });
 
         return ctx;
     }
-    void setErrorCallback(void (*ecb)(const char* text)) {
-        onError = ecb;
-    }
 
+  
     // --------------------------------------------------------------
     // UDP CREATE + THREADS
     // --------------------------------------------------------------
     ConnectionContext* createUDP(const std::string& srcIP, uint16_t srcPort,
         const std::string& destIP, uint16_t destPort)
     {
+        SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (s == INVALID_SOCKET) {
+            if (onError) {
+                int errCode = WSAGetLastError();
+                onError(("Failed to create UDP socket. OS Error: " + getOSErrorString(errCode)).c_str());
+            }
+            return nullptr;
+        }
+
+        sockaddr_in srcAddr{};
+        srcAddr.sin_family = AF_INET;
+        srcAddr.sin_port = htons(srcPort);
+        srcAddr.sin_addr.s_addr = INADDR_ANY;
+
+        if (bind(s, (sockaddr*)&srcAddr, sizeof(srcAddr)) == SOCKET_ERROR) {
+            if (onError) {
+                int errCode = WSAGetLastError();
+                onError(("Failed to bind UDP socket. OS Error: " + getOSErrorString(errCode)).c_str());
+            }
+            closesocket(s);
+            return nullptr;
+        }
+
         ConnectionContext* ctx = new ConnectionContext();
         ctx->srcIP = srcIP;
         ctx->destIP = destIP;
         ctx->srcPort = srcPort;
         ctx->destPort = destPort;
+        ctx->sock = s;
         ctx->isTCP = false;
+        ctx->running = true;
 
-        std::thread([this, ctx]() {
-            SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-            if (s == INVALID_SOCKET) {
-                if (onError) {
-                    int errCode = WSAGetLastError();
-                    onError((getCtxString(ctx) + " Failed to create UDP socket. OS Error: " + getOSErrorString(errCode)).c_str());
-                }
-                ctx->running = false;
-                return;
-            }
-
-            sockaddr_in srcAddr{};
-            srcAddr.sin_family = AF_INET;
-            srcAddr.sin_port = htons(ctx->srcPort);
-            srcAddr.sin_addr.s_addr = INADDR_ANY;
-
-            if (bind(s, (sockaddr*)&srcAddr, sizeof(srcAddr)) == SOCKET_ERROR) {
-                if (onError) {
-                    int errCode = WSAGetLastError();
-                    onError((getCtxString(ctx) + " Failed to bind UDP socket. OS Error: " + getOSErrorString(errCode)).c_str());
-                }
-                closesocket(s);
-                ctx->running = false;
-                return;
-            }
-
-            ctx->sock = s;
-
-            ctx->senderThread = std::thread([this, ctx]() { udpSender(ctx); });
-            ctx->receiverThread = std::thread([this, ctx]() { udpReceiver(ctx); });
-
-            }).detach();
+        ctx->senderThread = std::thread([this, ctx]() { udpSender(ctx); });
+        ctx->receiverThread = std::thread([this, ctx]() { udpReceiver(ctx); });
 
         return ctx;
     }
+
 
 protected:
     std::string getCtxString(ConnectionContext* ctx) {
@@ -295,6 +287,9 @@ protected:
     
         sockaddr_in from{};
         int fromLen = sizeof(from);
+        // Always allow reuse
+        int opt = 1;
+        setsockopt(ctx->sock, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(opt));
 
         while (ctx->running) {
             int r = recvfrom(ctx->sock, (char*)buffer, bufferSize, 0, (sockaddr*)&from, &fromLen);

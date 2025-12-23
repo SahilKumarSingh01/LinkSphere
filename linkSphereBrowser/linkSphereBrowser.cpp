@@ -15,7 +15,9 @@
 #include "MouseKeyboardControls.h"
 #include "getLocalIPs.h"
 #include "buildOfflinePage.h"
+#include "ThreadPool.h"
 
+ThreadPool g_pool(4); // or std::thread::hardware_concurrency(
 BrowserWithMessaging* g_browser = nullptr;
 NetworkManager* g_net = nullptr;
 
@@ -26,34 +28,70 @@ static void setEventHandler(const std::wstring& e, std::function<void(const std:
 }
 
 void onNotification(const std::wstring& m) {
-    std::wcout << L"[NOTIFY] " << m << std::endl;
-    size_t p = m.find(L'-');
-    if (p != std::wstring::npos) {
-        auto it = notificationHandlers.find(m.substr(0, p));
-        if (it != notificationHandlers.end()) return it->second(m.substr(p + 1));
-    }
-    //std::wcout << L"[NOTIFY] " << m << std::endl;
+    g_pool.enqueue([m] {
+        size_t p = m.find(L'-');
+
+        if (p != std::wstring::npos) {
+            auto it = notificationHandlers.find(m.substr(0, p));
+            if (it != notificationHandlers.end()) {
+                it->second(m.substr(p + 1));
+                return;
+            }
+        }
+
+        std::wcout << L"[NOTIFY] " << m << std::endl;
+        });
 }
 
-void printDataInHex(const uint8_t* d, size_t s) {
-    for (size_t i = 0; i < s; ++i)
-        std::cout << std::hex << std::setw(2) << std::setfill('0') << (int)d[i] << " ";
-    std::cout << std::dec << std::endl;
+void onBrowserMessage(const BYTE* d, uint32_t s) {
+    if (!g_net) return;
+
+    std::vector<uint8_t> copy(d, d + s); // safe lifetime
+    g_pool.enqueue([buf = std::move(copy), s] {
+        bool success = g_net->sendMessage(buf.data(), s);
+        std::cout << "message received from browser\n";
+
+        if (!success) { // only on failure
+            MessageBlock msg(buf.data(), s); // create MessageBlock for info
+            uint8_t type8 = (msg.getType() >> 7) & 1;
+            std::string failMsg = msg.getSrcString() + ":" +
+                std::to_string(msg.getSrcPort()) + "::" +
+                msg.getDstString() + ":" +
+                std::to_string(msg.getDstPort())+"-conFailed";
+
+            // send this string back to browser (replace with your actual send method)
+            g_browser->notify(wstring(failMsg.begin(),failMsg.end()).c_str());
+        }
+        });
 }
 
-void onBrowserMessage(const BYTE* d, uint32_t s) { if (g_net) g_net->sendMessage(d, s); cout << "message receive from browser" << endl; }
-void onNetworkMessage(const uint8_t* d, uint32_t s) { if (g_browser) g_browser->sendMessage(d, s); cout << "message send to browser" << endl; }
+
+void onNetworkMessage(const uint8_t* d, uint32_t s) {
+    if (!g_browser) return;
+
+    std::vector<uint8_t> copy(d, d + s);
+    g_pool.enqueue([buf = std::move(copy), s] {
+        g_browser->sendMessage(buf.data(), s);
+        std::cout << "message send to browser\n";
+        });
+}
 
 void handleError(const char* t) {
     if (!g_browser) return;
-    int sz = MultiByteToWideChar(CP_UTF8, 0, t, -1, nullptr, 0);
-    std::wstring w(sz, 0);
-    MultiByteToWideChar(CP_UTF8, 0, t, -1, &w[0], sz);
-    if (!w.empty() && w.back() == L'\0') w.pop_back();
-    g_browser->notify(w.c_str());
+
+    std::string copy(t);
+    g_pool.enqueue([msg = std::move(copy)] {
+        int sz = MultiByteToWideChar(CP_UTF8, 0, msg.c_str(), -1, nullptr, 0);
+        std::wstring w(sz, 0);
+        MultiByteToWideChar(CP_UTF8, 0, msg.c_str(), -1, &w[0], sz);
+        if (!w.empty() && w.back() == L'\0') w.pop_back();
+        g_browser->notify((L"Error-"+w).c_str());
+        });
 }
 
+
 int main() {
+    //std::cout<<std::thread::hardware_concurrency() << std::endl;;
     std::wstring url = L"http://localhost:3000/testing";
 
     BrowserWithMessaging browser(url, L"LinkSphere", 1000, 700, IDI_WINDOWSPROJECT1);
@@ -68,9 +106,10 @@ int main() {
     browser.setOnNotificationCallback(onNotification);
 
     setEventHandler(L"startTCP", [](const std::wstring& p) {
-        if (g_net && g_browser && g_net->startTCPServer((uint16_t)std::stoi(p)))
-            g_browser->notify((L"serverStarted-" + p).c_str());
+        bool ok = g_net && g_browser &&g_net->startTCPServer((uint16_t)std::stoi(p));
+        g_browser->notify(((ok ? L"serverStarted-" : L"serverFailed-") + p).c_str());
         });
+
 
     setEventHandler(L"getIp", [](const std::wstring&) {
         if (!g_browser) return;

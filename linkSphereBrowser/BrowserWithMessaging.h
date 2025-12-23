@@ -182,29 +182,21 @@ private:
         g_running = 1;
         receiverThread = std::thread([this] {
             std::unique_lock<std::mutex> lock(g_mutex);
-            //cout << "thread started" << endl;
             while (g_running) {
-                //cout << "we enter the loop" << endl;
-                // Wait until JS signals that data is available
-                g_cv.wait(lock);
-                //cout << "unlock\n";
-                // Process all messages in the channel
-                while (channel && channel->availableToRead() > 0) {
-                    uint32_t msgSize = channel->sizeofNextMessage();
-                    if (msgSize == 0) break;
-
-                    BYTE* buffer = new BYTE[msgSize];
-                    int readBytes = channel->readBuf(buffer, msgSize);
-
-                    if (readBytes > 0)
-                        onReceive(buffer, readBytes);
-
-                    delete[] buffer;
-                }
+                g_cv.wait(lock, [this] {
+                    return !g_running || (channel && channel->availableToRead() > 0);
+                    });
+                if (!g_running) break;
+                uint32_t msgSize = channel->sizeofNextMessage();
+                if (!msgSize) continue;
+                BYTE* buffer = new BYTE[msgSize];
+                int readBytes = channel->readBuf(buffer, msgSize);
+                if (readBytes > 0) onReceive(buffer, readBytes);
+                delete[] buffer;
             }
-            //cout << "thread ended" << endl;
             });
     }
+
 
  
 
