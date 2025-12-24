@@ -22,7 +22,7 @@ if (!admin.apps.length) {
 
 export async function POST(req) {
   try {
-     console.log("backend called");
+     console.log("backend called",req);
     const ip =
     req.headers.get("x-forwarded-for")?.split(",")[0] || req.headers.get("x-real-ip") ||"unknown";
     const body=await req.json();
@@ -42,7 +42,7 @@ export async function POST(req) {
     
     //console.log("ip:",ip," privateIP:",privateIP," organisationName:",organisationName);
     const uid = privateIP+":"+ip;
-    
+    // console.log(ip,privateIp);
     // 1️⃣ Create custom token
     const customToken = await admin.auth().createCustomToken(uid);
 

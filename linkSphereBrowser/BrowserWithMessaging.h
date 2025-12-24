@@ -4,6 +4,7 @@
 #include <condition_variable>
 #include "BrowserWindow.h"
 #include "MessageChannel.h"
+#include "ThreadPool.h"
 
 #define WM_SEND_TO_WEBVIEW (WM_APP + 123)
 #define WM_CUSTOM_CLOSE (WM_APP + 124)
@@ -22,10 +23,13 @@ public:
         int height = 700,
         int resourceId = 0
     ) : BrowserWindow(url, title, width, height, resourceId) {
+        threadPool = new ThreadPool(4);
     }
 
     ~BrowserWithMessaging() {
+        
         stopReceiverThread();
+        delete threadPool;
     }
 
     int sendMessage(const BYTE* data, uint32_t size) {
@@ -39,7 +43,8 @@ public:
         onReceive = cb;
         stopReceiverThread();
         // Start polling thread
-        startReceiverThread();
+        if (cb)
+            startReceiverThread();
     }
     void setOnNotificationCallback(void (*cb)(const std::wstring&)) {
         onNotification = cb;
@@ -78,6 +83,7 @@ private:
     std::thread receiverThread;
     bool g_running=1;
     bool windowAlive=true;
+    ThreadPool* threadPool;
 
     void initilizeMessageChannel()
     {
@@ -113,22 +119,28 @@ private:
                     wil::unique_cotaskmem_string msg;
                     args->TryGetWebMessageAsString(&msg);
 
-                    std::wstring message(msg.get());
-                    if (message == L"dataReady") {
-                        // Notify the receiver thread that new data is available
-                        lock_guard<mutex> lock(g_mutex);/*
-                        cout << "we receive that event" << endl;*/
-                        g_cv.notify_one();
+                    std::wstring* message = new std::wstring(msg.get());
 
+                    if (*message == L"dataReady") {
+                        // Notify the receiver thread that new data is available
+                        lock_guard<mutex> lock(g_mutex);
+                        g_cv.notify_one();
+                        delete message; // free immediately, no need to pass to threadPool
                     }
-                    else if (onNotification)
-                        onNotification(message);
-                    //cout << "it goes out of scope" << endl;
+                    else if (onNotification) {
+                        // Use threadPool for async call
+                        threadPool->enqueue([this, message]() {
+                            onNotification(*message);
+                            delete message; // free after use
+                            });
+                    }
+
                     return S_OK;
                 }
             ).Get(),
             nullptr
         );
+
     }
 
 
@@ -182,29 +194,26 @@ private:
         g_running = 1;
         receiverThread = std::thread([this] {
             std::unique_lock<std::mutex> lock(g_mutex);
-            //cout << "thread started" << endl;
             while (g_running) {
-                //cout << "we enter the loop" << endl;
-                // Wait until JS signals that data is available
-                g_cv.wait(lock);
-                //cout << "unlock\n";
-                // Process all messages in the channel
-                while (channel && channel->availableToRead() > 0) {
-                    uint32_t msgSize = channel->sizeofNextMessage();
-                    if (msgSize == 0) break;
-
-                    BYTE* buffer = new BYTE[msgSize];
-                    int readBytes = channel->readBuf(buffer, msgSize);
-
-                    if (readBytes > 0)
+                g_cv.wait(lock, [this] {
+                    return !g_running || (channel && channel->availableToRead() > 0);
+                    });
+                if (!g_running) break;
+                uint32_t msgSize = channel->sizeofNextMessage();
+                if (!msgSize) continue;
+                BYTE* buffer = new BYTE[msgSize];
+                int readBytes = channel->readBuf(buffer, msgSize);
+                if (readBytes > 0) {
+                    threadPool->enqueue([this, buffer, readBytes]() {
                         onReceive(buffer, readBytes);
-
-                    delete[] buffer;
+                        delete[] buffer;
+                        });
                 }
+                //delete[] buffer;
             }
-            //cout << "thread ended" << endl;
             });
     }
+
 
  
 
@@ -240,6 +249,7 @@ private:
         case WM_CUSTOM_CLOSE:
         {
             //cout << "custom close funtion is called \n";
+            cout << "we are here as just about to close" << endl;
             return DefWindowProc(hWnd, WM_CLOSE, 0, 0);
         }
         case WM_SEND_TO_WEBVIEW:
@@ -275,7 +285,7 @@ private:
         }
         break;
         case WM_DESTROY:
-            //cout << "destroy function is called\n";
+            cout << "destroy function is called\n";
             PostQuitMessage(0);
             windowAlive = false;
             break;

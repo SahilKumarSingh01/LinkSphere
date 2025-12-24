@@ -1,161 +1,174 @@
 "use client";
 
-import { useState } from "react";
-import axios from "axios";
-import os from "os";
+import { useEffect, useState } from "react";
+import { useMessageHandler } from "@context/MessageHandler.jsx";
 
-const PROJECT_ID = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
-const API_KEY = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
+export default function NativeInteractiveTest() {
+  const handler = useMessageHandler();
+  const [logs, setLogs] = useState([]);
 
-export default function Home() {
-  const [customToken, setCustomToken] = useState(null);
-  const [idToken, setIdToken] = useState(null);
-  const [refreshToken, setRefreshToken] = useState(null);
-  const [refreshUserId, setRefreshUserId] = useState(null);
-  const [data, setData] = useState(null);
-  const [userId,setUserId]=useState(null);
-  const [organisationName,setOrganisationName]=useState("mnnit") // setting organisation name default mnnit
-  const [privateIP,setPrivateIP]=useState("127.1.2.2");
+  const log = (msg) => setLogs((prev) => [...prev, msg]);
 
+  useEffect(() => {
+    if (!handler) return;
 
-  
-  // 1️⃣ Get custom token
-  async function handleGetCustomToken() {
-    try { 
-       
-      //setPrivateIP(getPrivateIp());
-      console.log("called:",privateIP);
+    // General fallback notification
+    handler.setOnNotification((msg) => {
+      log(`[NOTIFICATION] ${msg}`);
+    });
 
-      if(!privateIP || !organisationName)
-      {
-        return;
-      }
-      const data={
-        organisationName,
-        privateIP
-      }
-      const res = await axios.post("/api/token",data);
+    // TCP server notifications
+    handler.setNotificationHandler("serverStarted", (param) =>
+      log(`[TCP] Server started at port ${param}`)
+    );
+    handler.setNotificationHandler("serverFailed", (param) =>
+      log(`[TCP] Server failed to start at port ${param}`)
+    );
 
-      setCustomToken(res.data.token);
-      setUserId(res.data.userId);
-      console.log("res:",res);
-    } catch (err) {
-      console.error(err.response?.data || err);
-    }
-  }
+    // Connection notifications
+    handler.setNotificationHandler("create-success", (param) =>
+      log(`[CREATE_CONN] ${param}`)
+    );
+    handler.setNotificationHandler("create-failed", (param) =>
+      log(`[CREATE_CONN] Failed: ${param}`)
+    );
+    handler.setNotificationHandler("received-success", (param) =>
+      log(`[REMOVE_CONN] ${param}`)
+    );
+    handler.setNotificationHandler("received-failed", (param) =>
+      log(`[REMOVE_CONN] Failed: ${param}`)
+    );
+    handler.setNotificationHandler("connected", (param) =>
+      log(`[CLIENT_CONN] : ${param}`)
+    );
 
-  // 2️⃣ Exchange custom token → ID token
-  async function handleExchangeToken() {
-    try {
-      const res = await axios.post(
-        `https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${API_KEY}`,
-        {
-          token: customToken,
-          returnSecureToken: true,
-        }
-      );
-      console.log(res);
-      setIdToken(res.data.idToken);
-      setRefreshToken(res.data.refreshToken);
-    } catch (err) {
-      console.error(err.response?.data || err);
-    }
-  }
+    // IP assignment
+    handler.setNotificationHandler("IpAssigned", (param) =>
+      log(`[IP] Assigned: ${param}`)
+    );
 
-  // 3️⃣ Update Firestore doc
-  async function handleUpdateMyData() {
-    if (!idToken) return;
+    // === KEY & MOUSE LISTENERS ===
+    const handleKeyDown = (e) =>
+      log(`[KEY_DOWN] ${e.key} (Code: ${e.keyCode})`);
+    const handleKeyUp = (e) =>
+      log(`[KEY_UP] ${e.key} (Code: ${e.keyCode})`);
+    const handleMouseDown = (e) => log(`[MOUSE_DOWN] Button: ${e.button}`);
+    const handleMouseUp = (e) => log(`[MOUSE_UP] Button: ${e.button}`);
+    const handleMouseMove = (e) =>
+      log(`[MOUSE_MOVE] X: ${e.clientX}, Y: ${e.clientY}`);
+    const handleWheel = (e) => log(`[MOUSE_WHEEL] Delta: ${e.deltaY}`);
 
-    try {
-      const res = await axios.patch(
-        `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/organisation/${organisationName}/lastSeen/${userId}?updateMask.fieldPaths=lastSeen`,
-        {
-          fields: {
-            lastSeen: { timestampValue: new Date().toISOString() },
-          },
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${idToken}`,
-            "Content-Type": "application/json",
-          },
-        }
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+    // window.addEventListener("mousedown", handleMouseDown);
+    // window.addEventListener("mouseup", handleMouseUp);
+    // window.addEventListener("mousemove", handleMouseMove);
+    // window.addEventListener("wheel", handleWheel);
+
+    // === MESSAGE RECEIVING ===
+    const registerMessageHandlers = () => {
+      if (!handler) return;
+
+      // Register all types you expect here
+      const udpTypes = [1]; // example: 1 = UDP text type
+      const tcpTypes = [172]; // example: 172 = TCP text type
+
+      udpTypes.forEach((type) =>
+        handler.setOnMessageReceive(type, (msg) => {
+          const payloadText = new TextDecoder().decode(msg.payload);
+          log(`[UDP_MSG] From ${msg.src}:${msg.srcPort} → ${msg.dst}:${msg.dstPort} | ${payloadText}`);
+        })
       );
 
-      setData(res.data);
-      console.log("Last seen updated:", res.data);
-    } catch (err) {
-      console.error("Failed to update lastSeen:", err.response?.data || err);
-    }
-  }
-
-  // 4️⃣ Fetch all users
-  async function handleFetchAll() {
-    if (!idToken) return;
-
-    try {
-      const res = await axios.get(
-        `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/organisation/${organisationName}/lastSeen`,
-        {
-          headers: {
-            Authorization: `Bearer ${idToken}`,
-          },
-        }
+      tcpTypes.forEach((type) =>
+        handler.setOnMessageReceive(type, (msg) => {
+          const payloadText = new TextDecoder().decode(msg.payload);
+          log(`[TCP_MSG] From ${msg.src}:${msg.srcPort} → ${msg.dst}:${msg.dstPort} | ${payloadText}`);
+        })
       );
-      console.log(res.data);
-      setData(res.data);
-    } catch (err) {
-      console.error(err.response?.data || err);
-    }
-  }
+    };
 
-  // 5️⃣ Refresh ID token using refresh token
-  async function handleRefreshIdToken() {
-    if (!refreshToken) return;
+    registerMessageHandlers();
 
-    try {
-      const params = new URLSearchParams();
-      params.append("grant_type", "refresh_token");
-      params.append("refresh_token", refreshToken);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+      // window.removeEventListener("mousedown", handleMouseDown);
+      // window.removeEventListener("mouseup", handleMouseUp);
+      // window.removeEventListener("mousemove", handleMouseMove);
+      // window.removeEventListener("wheel", handleWheel);
+    };
+  }, [handler]);
 
-      const res = await axios.post(
-        `https://securetoken.googleapis.com/v1/token?key=${API_KEY}`,
-        params,
-        {
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        }
-      );
+  // === SEND EVENT & MESSAGE HELPERS ===
+  const sendEvent = (event, payload = "") => {
+    if (!handler) return;
+    log(`[SEND] ${event}-${payload}`);
+    handler.sendNotification(payload ? `${event}-${payload}` : event);
+  };
 
-      console.log("Refresh response:", res.data);
-      setIdToken(res.data.id_token);        // update ID token
-      setRefreshToken(res.data.refresh_token); // update refresh token if changed
-      setRefreshUserId(res.data.user_id);   // store user ID
-    } catch (err) {
-      console.error("Failed to refresh ID token:", err.response?.data || err);
-    }
-  }
+  const sendMessage = ({ type, payload }) => {
+    if (!handler) return;
+    const srcIP = handler.getDefaultIP()?.ipNum || 0x7F000001;
+    const dstIP = srcIP; // loopback for testing
+    const srcPort = type >= 128 ? 0 : 5000;
+    const dstPort = type >= 128 ? 5173: 5000;
+
+    handler.sendMessage({
+      src: srcIP,
+      srcPort,
+      dst: dstIP,
+      dstPort,
+      type,
+      payload: new TextEncoder().encode(payload),
+    });
+
+    log(`[SEND_MSG] Type ${type} | Payload: ${payload}`);
+  };
 
   return (
     <div style={{ padding: 20 }}>
-      <button onClick={handleGetCustomToken}>1️⃣ Get Custom Token</button>
-      <button onClick={handleExchangeToken} disabled={!customToken}>
-        2️⃣ Exchange for ID Token
-      </button>
-      <button onClick={handleUpdateMyData} disabled={!idToken}>
-        3️⃣ Update My Last Seen
-      </button>
-      <button onClick={handleFetchAll} disabled={!idToken}>
-        4️⃣ Fetch All Users
-      </button>
-      <button onClick={handleRefreshIdToken} disabled={!refreshToken}>
-        5️⃣ Refresh ID Token
-      </button>
+      <h1>Native Interactive Test</h1>
+      <p>
+        Click a button to test a native action. Logs show verbose
+        success/failure and key/mouse presses.
+      </p>
 
-      <pre>Custom Token: {customToken}</pre>
-      <pre>ID Token: {idToken}</pre>
-      <pre>Refresh Token: {refreshToken}</pre>
-      <pre>User ID from Refresh: {refreshUserId}</pre>
-      <pre>{JSON.stringify(data, null, 2)}</pre>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 20 }}>
+        <button onClick={() => sendEvent("startTCP", "5173")}>Start TCP Server</button>
+        <button onClick={() => sendEvent("getIp","private")}>Get Local IPs</button>
+        <button onClick={() => sendEvent("createConn", "1-2130706433-5000-2130706433-5000")}>Create Connection udp</button>
+        <button onClick={() => sendEvent("removeConn", "1-2130706433-5000-2130706433-5000")}>Remove Connection udp</button>
+        <button onClick={() => sendEvent("createConn", "172-2130706433-0-2130706433-5173")}>Create Connection tcp</button>
+        <button onClick={() => sendEvent("removeConn", "172-2130706433-0-2130706433-5173")}>Remove Connection tcp</button>
+
+        <button onClick={() => sendEvent("mouseMove", "100,100")}>Mouse Move</button>
+        <button onClick={() => sendEvent("mouseLeft","click")}>Mouse Left Click</button>
+        <button onClick={() => sendEvent("mouseRight","click")}>Mouse Right Click</button>
+        <button onClick={() => sendEvent("mouseScroll", "120")}>Mouse Scroll</button>
+        <button onClick={() => sendEvent("keyDown", "65")}>Key Down 'A'</button>
+        <button onClick={() => sendEvent("keyUp", "65")}>Key Up 'A'</button>
+        <button onClick={() => sendEvent("close","current")}>Close App</button>
+
+        {/* Example sending text as binary message */}
+        <button onClick={() => sendMessage({ type: 1, payload: "Hello UDP!" })}>Send UDP Message</button>
+        <button onClick={() => sendMessage({ type: 172, payload: "Hello TCP!" })}>Send TCP Message</button>
+      </div>
+
+      <div
+        style={{
+          background: "#111",
+          color: "#0f0",
+          padding: 10,
+          height: "60vh",
+          overflowY: "scroll",
+          fontFamily: "monospace",
+        }}
+      >
+        {logs.map((l, i) => (
+          <div key={i}>{l}</div>
+        ))}
+      </div>
     </div>
   );
 }

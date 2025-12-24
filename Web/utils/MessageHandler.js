@@ -5,17 +5,12 @@ import { MessageBlock } from "./MessageBlock.js";
 export default class MessageHandler {
     constructor() {
         this.channel = null;
-        // this.listeners = new Set();
-        // this.notificationsEnabled = true;
-                // callbacks
         this.onMessageReceiveHandler = new Map();
         this.onNotification = null;
-          // notification event handlers
         this.notificationHandlers = new Map();
-        this.localIP=null;
         this.port=null;
-        this.interface=null;
-
+        this.localIPs = [];
+        this.defaultIP = null;
         this._init();
 
     }
@@ -40,45 +35,59 @@ export default class MessageHandler {
         console.log("[MessageHandler] Initialized");
         // Register automatic IpAssigned handler
         this.setNotificationHandler("IpAssigned", (msg) => {
-            const parts = msg.split("|"); // split IP and interface
-            this.localIP = parts[0] || null;
-            this.interface = parts[1] || null;
+            const [ip, iface] = msg.split("|");
+            if (!ip || this.localIPs.some(e => e.ip === ip)) return;
 
-            console.log("[MessageHandler] Stored local IP:", this.localIP);
-            console.log("[MessageHandler] Interface type:", this.interface);
+            const obj = { ip, interface: iface || null };
+            this.localIPs.push(obj);
+            if (!this.defaultIP) this.defaultIP = obj;
         });
+
 
         // start server automatically
         this.port = 5173;
         this.sendNotification("getIp-private");
         this.tryStartServer();
     }
+    getAllIPs() {
+        return this.localIPs;
+    }
+    getDefaultIP() {
+        return this.defaultIP;
+    }
+    setDefaultIP(index) {
+        if (index < 0 || index >= this.localIPs.length) return false;
+        this.defaultIP = this.localIPs[index];
+        return true;
+    }
+
 
     tryStartServer() {
         const port = this.port;
 
-        // set temporary handler for this attempt
+        const cleanup = () => {
+            this.notificationHandlers.delete("serverStarted");
+            this.notificationHandlers.delete("serverFailed");
+        };
+
         this.setNotificationHandler("serverStarted", (param) => {
             if (param === String(port)) {
                 console.log(`[MessageHandler] Server started at port ${port}`);
-                // remove this handler after success
-                this.notificationHandlers.delete("serverStarted");
+                cleanup();
             }
         });
 
-        // send request using existing sendNotification
-        this.sendNotification(`startTCP-${port}`);
-
-        // retry after 100ms if server hasn't started
-        setTimeout(() => {
-            // check if handler still exists → means no success yet
-            if (this.notificationHandlers.has("serverStarted")) {
-                this.notificationHandlers.delete("serverStarted");
-                this.port++; // try next port
-                this.tryStartServer();
+        this.setNotificationHandler("serverFailed", (param) => {
+            if (param === String(port)) {
+                cleanup();
+                this.port++;
+                setTimeout(() => this.tryStartServer(), 0);
             }
-        }, 100);
+        });
+
+        this.sendNotification(`startTCP-${port}`);
     }
+
 
     /* ---------------- HOST → JS ---------------- */
 
@@ -111,22 +120,13 @@ export default class MessageHandler {
 
             try {
                 const block = new MessageBlock(buf);
+                // console.log(block);
                 const handler = this.onMessageReceiveHandler.get(block.getType());
-                if(!handler)return;
+                if(!handler)continue;
                 handler({
-                    src: [
-                        (block.getSrcIP() >>> 24) & 0xFF,
-                        (block.getSrcIP() >>> 16) & 0xFF,
-                        (block.getSrcIP() >>> 8) & 0xFF,
-                        block.getSrcIP() & 0xFF
-                    ],
+                    src: block.getSrcIP(),
                     srcPort: block.getSrcPort(),
-                    dst: [
-                        (block.getDstIP() >>> 24) & 0xFF,
-                        (block.getDstIP() >>> 16) & 0xFF,
-                        (block.getDstIP() >>> 8) & 0xFF,
-                        block.getDstIP() & 0xFF
-                    ],
+                    dst: block.getDstIP(),
                     dstPort: block.getDstPort(),
                     type: block.getType(),
                     payload: block.getPayload()
@@ -173,7 +173,7 @@ export default class MessageHandler {
                 : new TextEncoder().encode(payload);
 
         const totalSize = 17 + payloadBytes.length;
-        console.log("totalSize of message", totalSize);
+        // console.log("totalSize of message", totalSize);
 
         // create MessageBlock directly with total size
         const msg = new MessageBlock(totalSize); // automatically sets totalSize

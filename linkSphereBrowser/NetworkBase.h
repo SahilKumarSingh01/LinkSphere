@@ -23,8 +23,8 @@ struct ConnectionContext {
     uint16_t destPort;
 
     SOCKET sock = INVALID_SOCKET;
-    bool isTCP;
-    bool isClient;
+    bool isTCP{false};
+    bool isClient{false};
 
     std::atomic<bool> running{ true };
 
@@ -41,21 +41,34 @@ protected:
 
     void (*onError)(const char* text) = nullptr;
 public:
-   
+    void setErrorCallback(void (*ecb)(const char* text)) {
+        onError = ecb;
+    }
+
     // --------------------------------------------------------------
     // TCP CREATE + THREADS
     // --------------------------------------------------------------
     ConnectionContext* createTCP(const std::string& srcIP, uint16_t srcPort,
-        const std::string& destIP, uint16_t destPort)
-    {
+        const std::string& destIP, uint16_t destPort){
         SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         if (s == INVALID_SOCKET) {
             if (onError) {
-                std::string err =
-                    "Failed to create TCP socket [Src: " + srcIP + ":" + std::to_string(srcPort) +
-                    " Dest: " + destIP + ":" + std::to_string(destPort) + "]";
-                onError(err.c_str());
+                onError("Failed to create TCP socket");
             }
+            return nullptr;
+        }
+
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(destPort);
+        inet_pton(AF_INET, destIP.c_str(), &addr.sin_addr);
+
+        if (connect(s, (sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
+            if (onError) {
+                int errCode = WSAGetLastError();
+                onError(("TCP connect failed. OS Error: " + getOSErrorString(errCode)).c_str());
+            }
+            closesocket(s);
             return nullptr;
         }
 
@@ -67,81 +80,59 @@ public:
         ctx->sock = s;
         ctx->isTCP = true;
         ctx->isClient = true;
+        ctx->running = true;
 
-        std::thread([this, ctx]() {
-            sockaddr_in addr{};
-            addr.sin_family = AF_INET;
-            addr.sin_port = htons(ctx->destPort);
-            inet_pton(AF_INET, ctx->destIP.c_str(), &addr.sin_addr);
-
-            if (connect(ctx->sock, (sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
-                if (onError) {
-                    int errCode = WSAGetLastError();
-                    onError((getCtxString(ctx) + " TCP connect failed. OS Error: " + getOSErrorString(errCode)).c_str());
-                }
-                ctx->running = false;
-                return;
-            }
-
-            ctx->senderThread = std::thread([this, ctx]() { tcpSender(ctx); });
-            ctx->receiverThread = std::thread([this, ctx]() { tcpReceiver(ctx); });
-
-            }).detach();
+        ctx->senderThread = std::thread([this, ctx]() { tcpSender(ctx); });
+        ctx->receiverThread = std::thread([this, ctx]() { tcpReceiver(ctx); });
 
         return ctx;
     }
-    void setErrorCallback(void (*ecb)(const char* text)) {
-        onError = ecb;
-    }
 
+  
     // --------------------------------------------------------------
     // UDP CREATE + THREADS
     // --------------------------------------------------------------
     ConnectionContext* createUDP(const std::string& srcIP, uint16_t srcPort,
         const std::string& destIP, uint16_t destPort)
     {
+        SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (s == INVALID_SOCKET) {
+            if (onError) {
+                int errCode = WSAGetLastError();
+                onError(("Failed to create UDP socket. OS Error: " + getOSErrorString(errCode)).c_str());
+            }
+            return nullptr;
+        }
+
+        sockaddr_in srcAddr{};
+        srcAddr.sin_family = AF_INET;
+        srcAddr.sin_port = htons(srcPort);
+        srcAddr.sin_addr.s_addr = INADDR_ANY;
+
+        if (bind(s, (sockaddr*)&srcAddr, sizeof(srcAddr)) == SOCKET_ERROR) {
+            if (onError) {
+                int errCode = WSAGetLastError();
+                onError(("Failed to bind UDP socket. OS Error: " + getOSErrorString(errCode)).c_str());
+            }
+            closesocket(s);
+            return nullptr;
+        }
+
         ConnectionContext* ctx = new ConnectionContext();
         ctx->srcIP = srcIP;
         ctx->destIP = destIP;
         ctx->srcPort = srcPort;
         ctx->destPort = destPort;
+        ctx->sock = s;
         ctx->isTCP = false;
+        ctx->running = true;
 
-        std::thread([this, ctx]() {
-            SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-            if (s == INVALID_SOCKET) {
-                if (onError) {
-                    int errCode = WSAGetLastError();
-                    onError((getCtxString(ctx) + " Failed to create UDP socket. OS Error: " + getOSErrorString(errCode)).c_str());
-                }
-                ctx->running = false;
-                return;
-            }
-
-            sockaddr_in srcAddr{};
-            srcAddr.sin_family = AF_INET;
-            srcAddr.sin_port = htons(ctx->srcPort);
-            srcAddr.sin_addr.s_addr = INADDR_ANY;
-
-            if (bind(s, (sockaddr*)&srcAddr, sizeof(srcAddr)) == SOCKET_ERROR) {
-                if (onError) {
-                    int errCode = WSAGetLastError();
-                    onError((getCtxString(ctx) + " Failed to bind UDP socket. OS Error: " + getOSErrorString(errCode)).c_str());
-                }
-                closesocket(s);
-                ctx->running = false;
-                return;
-            }
-
-            ctx->sock = s;
-
-            ctx->senderThread = std::thread([this, ctx]() { udpSender(ctx); });
-            ctx->receiverThread = std::thread([this, ctx]() { udpReceiver(ctx); });
-
-            }).detach();
+        ctx->senderThread = std::thread([this, ctx]() { udpSender(ctx); });
+        ctx->receiverThread = std::thread([this, ctx]() { udpReceiver(ctx); });
 
         return ctx;
     }
+
 
 protected:
     std::string getCtxString(ConnectionContext* ctx) {
@@ -173,7 +164,7 @@ protected:
                 std::unique_lock<std::mutex> lock(ctx->outgoingMutex);
                 ctx->outgoingCV.wait(lock, [ctx]() { return !ctx->running || !ctx->outgoingQueue.empty(); });
 
-                if (!ctx->running) return;
+                if (!ctx->running) break;
 
                 if (!ctx->outgoingQueue.empty()) {
                     msg = ctx->outgoingQueue.front();
@@ -211,9 +202,14 @@ protected:
             int received = 0;
             while (received < 4 && ctx->running) {
                 int r = recv(ctx->sock, (char*)sizeBuffer + received, 4 - received, 0);
-                if (r <= 0) {
-                    if (onError) onError((getCtxString(ctx) + " TCP recv header failed").c_str());
+                if (r < 0) {
+                    int errCode = WSAGetLastError();
+                    if (onError) onError((getCtxString(ctx) + " TCP recv body failed " + getOSErrorString(errCode)).c_str());
                     ctx->running = false;
+                    return;
+                }
+                if (r == 0) {
+                    shutdown(ctx->sock, SD_BOTH);   //for other side to know i am done too
                     return;
                 }
                 received += r;
@@ -228,9 +224,14 @@ protected:
             received = 4;
             while (received < totalSize && ctx->running) {
                 int r = recv(ctx->sock, (char*)fullBuffer.get() + received, totalSize - received, 0);
-                if (r <= 0) {
-                    if (onError) onError((getCtxString(ctx) + " TCP recv body failed").c_str());
+                if (r < 0) {
+                    int errCode = WSAGetLastError();
+                    if (onError) onError((getCtxString(ctx) + " TCP recv body failed "+ getOSErrorString(errCode)).c_str());
                     ctx->running = false;
+                    return;
+                }
+                if (r == 0) {
+                    shutdown(ctx->sock, SD_BOTH);   //for other side to know i am done too
                     return;
                 }
                 received += r;
@@ -260,7 +261,7 @@ protected:
                 std::unique_lock<std::mutex> lock(ctx->outgoingMutex);
                 ctx->outgoingCV.wait(lock, [ctx]() { return !ctx->running || !ctx->outgoingQueue.empty(); });
 
-                if (!ctx->running) return;
+                if (!ctx->running) break;
 
                 if (!ctx->outgoingQueue.empty()) {
                     msg = ctx->outgoingQueue.front();
@@ -293,12 +294,22 @@ protected:
         const int bufferSize = 1024 * 64;
         uint8_t* buffer = new uint8_t[bufferSize];
     
-        sockaddr_in from{};
+        sockaddr_storage from{};
         int fromLen = sizeof(from);
+        // Always allow reuse
+        int opt = 1;
+        setsockopt(ctx->sock, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(opt));
 
         while (ctx->running) {
             int r = recvfrom(ctx->sock, (char*)buffer, bufferSize, 0, (sockaddr*)&from, &fromLen);
-            if (r <= 0) continue;
+            if (r == 0 && isLoopback(from)) {
+                ctx->running = false;
+                continue;
+            }
+            if (r < 0) {
+                //std::cout << "this happen" << std::endl;
+                continue;
+            }
 
             MessageBlock* mb = new MessageBlock(buffer, r);
             {
@@ -311,6 +322,21 @@ protected:
         delete[] buffer;
 
     }
+    bool isLoopback(const sockaddr_storage& addr) {
+        if (addr.ss_family == AF_INET) {
+            auto* a = (sockaddr_in*)&addr;
+            uint32_t ip = ntohl(a->sin_addr.s_addr);
+            return (ip & 0xFF000000) == 0x7F000000;
+        }
+
+        if (addr.ss_family == AF_INET6) {
+            auto* a = (sockaddr_in6*)&addr;
+            static const in6_addr loopback = IN6ADDR_LOOPBACK_INIT;
+            return memcmp(&a->sin6_addr, &loopback, sizeof(in6_addr)) == 0;
+        }
+
+        return false;
+    }
 
     void stopConnection(ConnectionContext* ctx) {
         if (!ctx) return;
@@ -318,13 +344,27 @@ protected:
         ctx->running = false;
         ctx->outgoingCV.notify_all();
 
-        if (ctx->sock != INVALID_SOCKET) shutdown(ctx->sock, SD_BOTH);
+        SOCKET to_close = ctx->sock;
+        
+        if (to_close != INVALID_SOCKET) {
+            if(ctx->isTCP)shutdown(to_close, SD_BOTH);
+            else {
+                sockaddr_in a{};
+                a.sin_family = AF_INET;
+                a.sin_port = htons(ctx->srcPort);
+                a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+
+                sendto(ctx->sock, nullptr, 0, 0, (sockaddr*)&a, sizeof(a));
+
+            }
+        }
 
         if (ctx->senderThread.joinable()) ctx->senderThread.join();
+
         if (ctx->receiverThread.joinable()) ctx->receiverThread.join();
 
-        if (ctx->sock != INVALID_SOCKET) { closesocket(ctx->sock); ctx->sock = INVALID_SOCKET; }
-
+        if (to_close != INVALID_SOCKET) { closesocket(to_close); }
+        ctx->sock = INVALID_SOCKET;
         for (auto msg : ctx->outgoingQueue) delete msg;
         ctx->outgoingQueue.clear();
 

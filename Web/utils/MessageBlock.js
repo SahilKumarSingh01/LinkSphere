@@ -63,14 +63,22 @@ export class MessageBlock {
         this._buffer[4] = newType;
     }
 
-    setSrc(ipBytes, port) {
-        this._buffer.set(ipBytes.slice(0, 4), 5);
+    setSrc(ipNum, port) {
+        this._buffer[5] = (ipNum >>> 24) & 0xFF;
+        this._buffer[6] = (ipNum >>> 16) & 0xFF;
+        this._buffer[7] = (ipNum >>> 8) & 0xFF;
+        this._buffer[8] = ipNum & 0xFF;
+
         this._buffer[9] = (port >> 8) & 0xFF;
         this._buffer[10] = port & 0xFF;
     }
 
-    setDst(ipBytes, port) {
-        this._buffer.set(ipBytes.slice(0, 4), 11);
+    setDst(ipNum, port) {
+        this._buffer[11] = (ipNum >>> 24) & 0xFF;
+        this._buffer[12] = (ipNum >>> 16) & 0xFF;
+        this._buffer[13] = (ipNum >>> 8) & 0xFF;
+        this._buffer[14] = ipNum & 0xFF;
+
         this._buffer[15] = (port >> 8) & 0xFF;
         this._buffer[16] = port & 0xFF;
     }
