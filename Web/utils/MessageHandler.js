@@ -5,18 +5,12 @@ import { MessageBlock } from "./MessageBlock.js";
 export default class MessageHandler {
     constructor() {
         this.channel = null;
-        // this.listeners = new Set();
-        // this.notificationsEnabled = true;
-                // callbacks
         this.onMessageReceiveHandler = new Map();
         this.onNotification = null;
-          // notification event handlers
         this.notificationHandlers = new Map();
         this.port=null;
         this.localIPs = [];
-        this.defaultIP = null; // stores { ip, interface }
-
-
+        this.defaultIP = null;
         this._init();
 
     }
@@ -126,22 +120,13 @@ export default class MessageHandler {
 
             try {
                 const block = new MessageBlock(buf);
+                // console.log(block);
                 const handler = this.onMessageReceiveHandler.get(block.getType());
                 if(!handler)continue;
                 handler({
-                    src: [
-                        (block.getSrcIP() >>> 24) & 0xFF,
-                        (block.getSrcIP() >>> 16) & 0xFF,
-                        (block.getSrcIP() >>> 8) & 0xFF,
-                        block.getSrcIP() & 0xFF
-                    ],
+                    src: block.getSrcIP(),
                     srcPort: block.getSrcPort(),
-                    dst: [
-                        (block.getDstIP() >>> 24) & 0xFF,
-                        (block.getDstIP() >>> 16) & 0xFF,
-                        (block.getDstIP() >>> 8) & 0xFF,
-                        block.getDstIP() & 0xFF
-                    ],
+                    dst: block.getDstIP(),
                     dstPort: block.getDstPort(),
                     type: block.getType(),
                     payload: block.getPayload()
@@ -188,7 +173,7 @@ export default class MessageHandler {
                 : new TextEncoder().encode(payload);
 
         const totalSize = 17 + payloadBytes.length;
-        console.log("totalSize of message", totalSize);
+        // console.log("totalSize of message", totalSize);
 
         // create MessageBlock directly with total size
         const msg = new MessageBlock(totalSize); // automatically sets totalSize

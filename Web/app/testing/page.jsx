@@ -1,130 +1,174 @@
 "use client";
 
-import { useState } from "react";
-import axios from "axios";
+import { useEffect, useState } from "react";
+import { useMessageHandler } from "@context/MessageHandler.jsx";
 
-const PROJECT_ID = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
-const API_KEY = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
+export default function NativeInteractiveTest() {
+  const handler = useMessageHandler();
+  const [logs, setLogs] = useState([]);
 
-export default function Home() {
-  const [data, setData] = useState(null);
-  const [organisationName, setOrganisationName] = useState("mnnit");
+  const log = (msg) => setLogs((prev) => [...prev, msg]);
 
-  // ---------------- Fetch all users ----------------
-  async function fetchAllUsers(orgName = organisationName) {
-    const accessToken = localStorage.getItem("accessToken");
-    if (!accessToken) return;
+  useEffect(() => {
+    if (!handler) return;
 
-    try {
-      const res = await axios.get(
-        `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/organisation/${orgName}/lastSeen`,
-        { headers: { Authorization: `Bearer ${accessToken}` } }
+    // General fallback notification
+    handler.setOnNotification((msg) => {
+      log(`[NOTIFICATION] ${msg}`);
+    });
+
+    // TCP server notifications
+    handler.setNotificationHandler("serverStarted", (param) =>
+      log(`[TCP] Server started at port ${param}`)
+    );
+    handler.setNotificationHandler("serverFailed", (param) =>
+      log(`[TCP] Server failed to start at port ${param}`)
+    );
+
+    // Connection notifications
+    handler.setNotificationHandler("create-success", (param) =>
+      log(`[CREATE_CONN] ${param}`)
+    );
+    handler.setNotificationHandler("create-failed", (param) =>
+      log(`[CREATE_CONN] Failed: ${param}`)
+    );
+    handler.setNotificationHandler("received-success", (param) =>
+      log(`[REMOVE_CONN] ${param}`)
+    );
+    handler.setNotificationHandler("received-failed", (param) =>
+      log(`[REMOVE_CONN] Failed: ${param}`)
+    );
+    handler.setNotificationHandler("connected", (param) =>
+      log(`[CLIENT_CONN] : ${param}`)
+    );
+
+    // IP assignment
+    handler.setNotificationHandler("IpAssigned", (param) =>
+      log(`[IP] Assigned: ${param}`)
+    );
+
+    // === KEY & MOUSE LISTENERS ===
+    const handleKeyDown = (e) =>
+      log(`[KEY_DOWN] ${e.key} (Code: ${e.keyCode})`);
+    const handleKeyUp = (e) =>
+      log(`[KEY_UP] ${e.key} (Code: ${e.keyCode})`);
+    const handleMouseDown = (e) => log(`[MOUSE_DOWN] Button: ${e.button}`);
+    const handleMouseUp = (e) => log(`[MOUSE_UP] Button: ${e.button}`);
+    const handleMouseMove = (e) =>
+      log(`[MOUSE_MOVE] X: ${e.clientX}, Y: ${e.clientY}`);
+    const handleWheel = (e) => log(`[MOUSE_WHEEL] Delta: ${e.deltaY}`);
+
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+    // window.addEventListener("mousedown", handleMouseDown);
+    // window.addEventListener("mouseup", handleMouseUp);
+    // window.addEventListener("mousemove", handleMouseMove);
+    // window.addEventListener("wheel", handleWheel);
+
+    // === MESSAGE RECEIVING ===
+    const registerMessageHandlers = () => {
+      if (!handler) return;
+
+      // Register all types you expect here
+      const udpTypes = [1]; // example: 1 = UDP text type
+      const tcpTypes = [172]; // example: 172 = TCP text type
+
+      udpTypes.forEach((type) =>
+        handler.setOnMessageReceive(type, (msg) => {
+          const payloadText = new TextDecoder().decode(msg.payload);
+          log(`[UDP_MSG] From ${msg.src}:${msg.srcPort} → ${msg.dst}:${msg.dstPort} | ${payloadText}`);
+        })
       );
-      setData(res.data);
-      console.log("Fetched all users:", res.data);
-    } catch (err) {
-      console.error("Failed to fetch users:", err.response?.data || err);
-    }
-  }
 
-  // ---------------- Update my IP / lastSeen ----------------
-  async function updateMyIP(localIP, orgName = organisationName) {
-    if (!localIP || !orgName) return;
+      tcpTypes.forEach((type) =>
+        handler.setOnMessageReceive(type, (msg) => {
+          const payloadText = new TextDecoder().decode(msg.payload);
+          log(`[TCP_MSG] From ${msg.src}:${msg.srcPort} → ${msg.dst}:${msg.dstPort} | ${payloadText}`);
+        })
+      );
+    };
 
-    let storedIP = localStorage.getItem("localIP");
-    let accessToken = localStorage.getItem("accessToken");
-    let refreshToken = localStorage.getItem("refreshToken");
-    let userId = localStorage.getItem("userId");
+    registerMessageHandlers();
 
-    try {
-      // Step 1: Get custom token if IP changed or no access token
-      if (storedIP !== localIP || !accessToken) {
-        const resToken = await axios.post("/api/token", {
-          organisationName: orgName,
-          privateIP: localIP,
-        });
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+      // window.removeEventListener("mousedown", handleMouseDown);
+      // window.removeEventListener("mouseup", handleMouseUp);
+      // window.removeEventListener("mousemove", handleMouseMove);
+      // window.removeEventListener("wheel", handleWheel);
+    };
+  }, [handler]);
 
-        const customToken = resToken.data.token;
-        userId = resToken.data.userId;
+  // === SEND EVENT & MESSAGE HELPERS ===
+  const sendEvent = (event, payload = "") => {
+    if (!handler) return;
+    log(`[SEND] ${event}-${payload}`);
+    handler.sendNotification(payload ? `${event}-${payload}` : event);
+  };
 
-        const resExchange = await axios.post(
-          `https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${API_KEY}`,
-          { token: customToken, returnSecureToken: true }
-        );
+  const sendMessage = ({ type, payload }) => {
+    if (!handler) return;
+    const srcIP = handler.getDefaultIP()?.ipNum || 0x7F000001;
+    const dstIP = srcIP; // loopback for testing
+    const srcPort = type >= 128 ? 0 : 5000;
+    const dstPort = type >= 128 ? 5173: 5000;
 
-        accessToken = resExchange.data.idToken;
-        refreshToken = resExchange.data.refreshToken;
+    handler.sendMessage({
+      src: srcIP,
+      srcPort,
+      dst: dstIP,
+      dstPort,
+      type,
+      payload: new TextEncoder().encode(payload),
+    });
 
-        localStorage.setItem("localIP", localIP);
-        localStorage.setItem("accessToken", accessToken);
-        localStorage.setItem("refreshToken", refreshToken);
-        localStorage.setItem("userId", userId);
-      }
-
-      // Step 2: Try updating lastSeen
-      try {
-        const resUpdate = await axios.patch(
-          `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/organisation/${orgName}/lastSeen/${userId}?updateMask.fieldPaths=lastSeen`,
-          { fields: { lastSeen: { timestampValue: new Date().toISOString() } } },
-          { headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" } }
-        );
-
-        console.log("Updated my lastSeen:", resUpdate.data);
-        setData(resUpdate.data);
-        return resUpdate.data;
-      } catch (err) {
-        // Step 3: Handle token expired
-        if (err.response?.status === 401 && refreshToken) {
-          console.log("Access token expired, refreshing...");
-          const params = new URLSearchParams();
-          params.append("grant_type", "refresh_token");
-          params.append("refresh_token", refreshToken);
-
-          const resRefresh = await axios.post(
-            `https://securetoken.googleapis.com/v1/token?key=${API_KEY}`,
-            params,
-            { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
-          );
-
-          accessToken = resRefresh.data.id_token;
-          refreshToken = resRefresh.data.refresh_token;
-
-          localStorage.setItem("accessToken", accessToken);
-          localStorage.setItem("refreshToken", refreshToken);
-
-          // Retry lastSeen update
-          const retry = await axios.patch(
-            `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/organisation/${orgName}/lastSeen/${userId}?updateMask.fieldPaths=lastSeen`,
-            { fields: { lastSeen: { timestampValue: new Date().toISOString() } } },
-            { headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" } }
-          );
-
-          console.log("Updated after token refresh:", retry.data);
-          setData(retry.data);
-          return retry.data;
-        } else {
-          throw err;
-        }
-      }
-    } catch (err) {
-      console.error("Failed to update my IP / lastSeen:", err.response?.data || err);
-      return null;
-    }
-  }
+    log(`[SEND_MSG] Type ${type} | Payload: ${payload}`);
+  };
 
   return (
     <div style={{ padding: 20 }}>
-      <button onClick={() => fetchAllUsers()}>Fetch All Users</button>
-      <button
-        onClick={() => {
-          const localIP = prompt("Enter your IP:");
-          if (localIP) updateMyIP(localIP);
+      <h1>Native Interactive Test</h1>
+      <p>
+        Click a button to test a native action. Logs show verbose
+        success/failure and key/mouse presses.
+      </p>
+
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 20 }}>
+        <button onClick={() => sendEvent("startTCP", "5173")}>Start TCP Server</button>
+        <button onClick={() => sendEvent("getIp","private")}>Get Local IPs</button>
+        <button onClick={() => sendEvent("createConn", "1-2130706433-5000-2130706433-5000")}>Create Connection udp</button>
+        <button onClick={() => sendEvent("removeConn", "1-2130706433-5000-2130706433-5000")}>Remove Connection udp</button>
+        <button onClick={() => sendEvent("createConn", "172-2130706433-0-2130706433-5173")}>Create Connection tcp</button>
+        <button onClick={() => sendEvent("removeConn", "172-2130706433-0-2130706433-5173")}>Remove Connection tcp</button>
+
+        <button onClick={() => sendEvent("mouseMove", "100,100")}>Mouse Move</button>
+        <button onClick={() => sendEvent("mouseLeft","click")}>Mouse Left Click</button>
+        <button onClick={() => sendEvent("mouseRight","click")}>Mouse Right Click</button>
+        <button onClick={() => sendEvent("mouseScroll", "120")}>Mouse Scroll</button>
+        <button onClick={() => sendEvent("keyDown", "65")}>Key Down 'A'</button>
+        <button onClick={() => sendEvent("keyUp", "65")}>Key Up 'A'</button>
+        <button onClick={() => sendEvent("close","current")}>Close App</button>
+
+        {/* Example sending text as binary message */}
+        <button onClick={() => sendMessage({ type: 1, payload: "Hello UDP!" })}>Send UDP Message</button>
+        <button onClick={() => sendMessage({ type: 172, payload: "Hello TCP!" })}>Send TCP Message</button>
+      </div>
+
+      <div
+        style={{
+          background: "#111",
+          color: "#0f0",
+          padding: 10,
+          height: "60vh",
+          overflowY: "scroll",
+          fontFamily: "monospace",
         }}
       >
-        Update My IP / Last Seen
-      </button>
-
-      <pre>{JSON.stringify(data, null, 2)}</pre>
+        {logs.map((l, i) => (
+          <div key={i}>{l}</div>
+        ))}
+      </div>
     </div>
   );
 }

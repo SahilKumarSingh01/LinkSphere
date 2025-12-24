@@ -23,8 +23,8 @@ struct ConnectionContext {
     uint16_t destPort;
 
     SOCKET sock = INVALID_SOCKET;
-    bool isTCP;
-    bool isClient;
+    bool isTCP{false};
+    bool isClient{false};
 
     std::atomic<bool> running{ true };
 
@@ -49,8 +49,7 @@ public:
     // TCP CREATE + THREADS
     // --------------------------------------------------------------
     ConnectionContext* createTCP(const std::string& srcIP, uint16_t srcPort,
-        const std::string& destIP, uint16_t destPort)
-    {
+        const std::string& destIP, uint16_t destPort){
         SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         if (s == INVALID_SOCKET) {
             if (onError) {
@@ -165,7 +164,7 @@ protected:
                 std::unique_lock<std::mutex> lock(ctx->outgoingMutex);
                 ctx->outgoingCV.wait(lock, [ctx]() { return !ctx->running || !ctx->outgoingQueue.empty(); });
 
-                if (!ctx->running) return;
+                if (!ctx->running) break;
 
                 if (!ctx->outgoingQueue.empty()) {
                     msg = ctx->outgoingQueue.front();
@@ -203,9 +202,14 @@ protected:
             int received = 0;
             while (received < 4 && ctx->running) {
                 int r = recv(ctx->sock, (char*)sizeBuffer + received, 4 - received, 0);
-                if (r <= 0) {
-                    if (onError) onError((getCtxString(ctx) + " TCP recv header failed").c_str());
+                if (r < 0) {
+                    int errCode = WSAGetLastError();
+                    if (onError) onError((getCtxString(ctx) + " TCP recv body failed " + getOSErrorString(errCode)).c_str());
                     ctx->running = false;
+                    return;
+                }
+                if (r == 0) {
+                    shutdown(ctx->sock, SD_BOTH);   //for other side to know i am done too
                     return;
                 }
                 received += r;
@@ -220,9 +224,14 @@ protected:
             received = 4;
             while (received < totalSize && ctx->running) {
                 int r = recv(ctx->sock, (char*)fullBuffer.get() + received, totalSize - received, 0);
-                if (r <= 0) {
-                    if (onError) onError((getCtxString(ctx) + " TCP recv body failed").c_str());
+                if (r < 0) {
+                    int errCode = WSAGetLastError();
+                    if (onError) onError((getCtxString(ctx) + " TCP recv body failed "+ getOSErrorString(errCode)).c_str());
                     ctx->running = false;
+                    return;
+                }
+                if (r == 0) {
+                    shutdown(ctx->sock, SD_BOTH);   //for other side to know i am done too
                     return;
                 }
                 received += r;
@@ -252,7 +261,7 @@ protected:
                 std::unique_lock<std::mutex> lock(ctx->outgoingMutex);
                 ctx->outgoingCV.wait(lock, [ctx]() { return !ctx->running || !ctx->outgoingQueue.empty(); });
 
-                if (!ctx->running) return;
+                if (!ctx->running) break;
 
                 if (!ctx->outgoingQueue.empty()) {
                     msg = ctx->outgoingQueue.front();
@@ -285,7 +294,7 @@ protected:
         const int bufferSize = 1024 * 64;
         uint8_t* buffer = new uint8_t[bufferSize];
     
-        sockaddr_in from{};
+        sockaddr_storage from{};
         int fromLen = sizeof(from);
         // Always allow reuse
         int opt = 1;
@@ -293,7 +302,14 @@ protected:
 
         while (ctx->running) {
             int r = recvfrom(ctx->sock, (char*)buffer, bufferSize, 0, (sockaddr*)&from, &fromLen);
-            if (r <= 0) continue;
+            if (r == 0 && isLoopback(from)) {
+                ctx->running = false;
+                continue;
+            }
+            if (r < 0) {
+                //std::cout << "this happen" << std::endl;
+                continue;
+            }
 
             MessageBlock* mb = new MessageBlock(buffer, r);
             {
@@ -306,6 +322,21 @@ protected:
         delete[] buffer;
 
     }
+    bool isLoopback(const sockaddr_storage& addr) {
+        if (addr.ss_family == AF_INET) {
+            auto* a = (sockaddr_in*)&addr;
+            uint32_t ip = ntohl(a->sin_addr.s_addr);
+            return (ip & 0xFF000000) == 0x7F000000;
+        }
+
+        if (addr.ss_family == AF_INET6) {
+            auto* a = (sockaddr_in6*)&addr;
+            static const in6_addr loopback = IN6ADDR_LOOPBACK_INIT;
+            return memcmp(&a->sin6_addr, &loopback, sizeof(in6_addr)) == 0;
+        }
+
+        return false;
+    }
 
     void stopConnection(ConnectionContext* ctx) {
         if (!ctx) return;
@@ -313,13 +344,27 @@ protected:
         ctx->running = false;
         ctx->outgoingCV.notify_all();
 
-        if (ctx->sock != INVALID_SOCKET) shutdown(ctx->sock, SD_BOTH);
+        SOCKET to_close = ctx->sock;
+        
+        if (to_close != INVALID_SOCKET) {
+            if(ctx->isTCP)shutdown(to_close, SD_BOTH);
+            else {
+                sockaddr_in a{};
+                a.sin_family = AF_INET;
+                a.sin_port = htons(ctx->srcPort);
+                a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+
+                sendto(ctx->sock, nullptr, 0, 0, (sockaddr*)&a, sizeof(a));
+
+            }
+        }
 
         if (ctx->senderThread.joinable()) ctx->senderThread.join();
+
         if (ctx->receiverThread.joinable()) ctx->receiverThread.join();
 
-        if (ctx->sock != INVALID_SOCKET) { closesocket(ctx->sock); ctx->sock = INVALID_SOCKET; }
-
+        if (to_close != INVALID_SOCKET) { closesocket(to_close); }
+        ctx->sock = INVALID_SOCKET;
         for (auto msg : ctx->outgoingQueue) delete msg;
         ctx->outgoingQueue.clear();
 
