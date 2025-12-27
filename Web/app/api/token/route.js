@@ -22,11 +22,11 @@ if (!admin.apps.length) {
 
 export async function POST(req) {
   try {
-     console.log("backend called",req);
+    //  console.log("backend called",req);
     const ip =
     req.headers.get("x-forwarded-for")?.split(",")[0] || req.headers.get("x-real-ip") ||"unknown";
     const body=await req.json();
-    let {privateIP,organisationName}= body;
+    let {privateIP,organisationName,userInfo}= body;
     
     if(!privateIP || !organisationName)
     {
@@ -48,9 +48,7 @@ export async function POST(req) {
 
     // 2️⃣ Create Firestore document immediately
     const userRef = admin.firestore().collection("organisation").doc(organisationName).collection("lastSeen").doc(uid);
-    await userRef.set({
-      lastSeen: admin.firestore.FieldValue.serverTimestamp(),
-    }, { merge: true }); // merge: true ensures we don't overwrite existing fields
+    await userRef.set(userInfo, { merge: true }); // merge: true ensures we don't overwrite existing fields
 
     return new Response(
       JSON.stringify({ 

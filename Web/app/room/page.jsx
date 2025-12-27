@@ -1,6 +1,7 @@
+'use client'
 import { useState, useRef, useEffect } from "react";
-import { Microphone, Speaker } from "../utils/audio";
-import WaveformVisualizer from "../components/WaveformVisualizer";
+import { Microphone, Speaker } from "@utils/audio";
+import WaveformVisualizer from "@components/WaveformVisualizer";
 
 const Home = () => {
   const [started, setStarted] = useState(false);

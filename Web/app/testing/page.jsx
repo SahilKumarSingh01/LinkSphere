@@ -60,10 +60,6 @@ export default function NativeInteractiveTest() {
 
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener("keyup", handleKeyUp);
-    // window.addEventListener("mousedown", handleMouseDown);
-    // window.addEventListener("mouseup", handleMouseUp);
-    // window.addEventListener("mousemove", handleMouseMove);
-    // window.addEventListener("wheel", handleWheel);
 
     // === MESSAGE RECEIVING ===
     const registerMessageHandlers = () => {
@@ -74,17 +70,23 @@ export default function NativeInteractiveTest() {
       const tcpTypes = [172]; // example: 172 = TCP text type
 
       udpTypes.forEach((type) =>
-        handler.setOnMessageReceive(type, (msg) => {
-          const payloadText = new TextDecoder().decode(msg.payload);
-          log(`[UDP_MSG] From ${msg.src}:${msg.srcPort} → ${msg.dst}:${msg.dstPort} | ${payloadText}`);
-        })
+        handler.setOnMessageReceive(
+          type,
+          (src, srcPort, dst, dstPort, type, payload) => {
+            const payloadText = new TextDecoder().decode(payload);
+            log(`[UDP_MSG] From ${src}:${srcPort} → ${dst}:${dstPort} | ${payloadText}`);
+          }
+        )
       );
 
       tcpTypes.forEach((type) =>
-        handler.setOnMessageReceive(type, (msg) => {
-          const payloadText = new TextDecoder().decode(msg.payload);
-          log(`[TCP_MSG] From ${msg.src}:${msg.srcPort} → ${msg.dst}:${msg.dstPort} | ${payloadText}`);
-        })
+        handler.setOnMessageReceive(
+          type,
+          (src, srcPort, dst, dstPort, type, payload) => {
+            const payloadText = new TextDecoder().decode(payload);
+            log(`[TCP_MSG] From ${src}:${srcPort} → ${dst}:${dstPort} | ${payloadText}`);
+          }
+        )
       );
     };
 
@@ -93,10 +95,6 @@ export default function NativeInteractiveTest() {
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
-      // window.removeEventListener("mousedown", handleMouseDown);
-      // window.removeEventListener("mouseup", handleMouseUp);
-      // window.removeEventListener("mousemove", handleMouseMove);
-      // window.removeEventListener("wheel", handleWheel);
     };
   }, [handler]);
 
@@ -109,19 +107,13 @@ export default function NativeInteractiveTest() {
 
   const sendMessage = ({ type, payload }) => {
     if (!handler) return;
-    const srcIP = handler.getDefaultIP()?.ipNum || 0x7F000001;
+    const srcIP =  0x7F000001;
     const dstIP = srcIP; // loopback for testing
     const srcPort = type >= 128 ? 0 : 5000;
-    const dstPort = type >= 128 ? 5173: 5000;
+    const dstPort = type >= 128 ? 5173 : 5000;
 
-    handler.sendMessage({
-      src: srcIP,
-      srcPort,
-      dst: dstIP,
-      dstPort,
-      type,
-      payload: new TextEncoder().encode(payload),
-    });
+    // Using new positional argument format
+    handler.sendMessage(srcIP, srcPort, dstIP, dstPort, type, new TextEncoder().encode(payload));
 
     log(`[SEND_MSG] Type ${type} | Payload: ${payload}`);
   };
@@ -136,19 +128,19 @@ export default function NativeInteractiveTest() {
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 20 }}>
         <button onClick={() => sendEvent("startTCP", "5173")}>Start TCP Server</button>
-        <button onClick={() => sendEvent("getIp","private")}>Get Local IPs</button>
-        <button onClick={() => sendEvent("createConn", "1-2130706433-5000-2130706433-5000")}>Create Connection udp</button>
-        <button onClick={() => sendEvent("removeConn", "1-2130706433-5000-2130706433-5000")}>Remove Connection udp</button>
-        <button onClick={() => sendEvent("createConn", "172-2130706433-0-2130706433-5173")}>Create Connection tcp</button>
-        <button onClick={() => sendEvent("removeConn", "172-2130706433-0-2130706433-5173")}>Remove Connection tcp</button>
+        <button onClick={() => sendEvent("getIp", "private")}>Get Local IPs</button>
+        <button onClick={() => sendEvent("createConn", "1-2130706433-5000-2130706433-5000")}>Create Connection UDP</button>
+        <button onClick={() => sendEvent("removeConn", "1-2130706433-5000-2130706433-5000")}>Remove Connection UDP</button>
+        <button onClick={() => sendEvent("createConn", "172-2130706433-0-2130706433-5173")}>Create Connection TCP</button>
+        <button onClick={() => sendEvent("removeConn", "172-2130706433-0-2130706433-5173")}>Remove Connection TCP</button>
 
         <button onClick={() => sendEvent("mouseMove", "100,100")}>Mouse Move</button>
-        <button onClick={() => sendEvent("mouseLeft","click")}>Mouse Left Click</button>
-        <button onClick={() => sendEvent("mouseRight","click")}>Mouse Right Click</button>
+        <button onClick={() => sendEvent("mouseLeft", "click")}>Mouse Left Click</button>
+        <button onClick={() => sendEvent("mouseRight", "click")}>Mouse Right Click</button>
         <button onClick={() => sendEvent("mouseScroll", "120")}>Mouse Scroll</button>
         <button onClick={() => sendEvent("keyDown", "65")}>Key Down 'A'</button>
         <button onClick={() => sendEvent("keyUp", "65")}>Key Up 'A'</button>
-        <button onClick={() => sendEvent("close","current")}>Close App</button>
+        <button onClick={() => sendEvent("close", "current")}>Close App</button>
 
         {/* Example sending text as binary message */}
         <button onClick={() => sendMessage({ type: 1, payload: "Hello UDP!" })}>Send UDP Message</button>

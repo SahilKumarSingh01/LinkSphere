@@ -250,10 +250,6 @@ protected:
     // UDP SENDER
     // --------------------------------------------------------------
     void udpSender(ConnectionContext* ctx) {
-        sockaddr_in addr{};
-        addr.sin_family = AF_INET;
-        addr.sin_port = htons(ctx->destPort);
-        inet_pton(AF_INET, ctx->destIP.c_str(), &addr.sin_addr);
 
         while (ctx->running) {
             MessageBlock* msg = nullptr;
@@ -271,6 +267,11 @@ protected:
 
             if (msg) {
                 const char* ptr = reinterpret_cast<const char*>(msg->getRawData());
+                sockaddr_in addr{};
+                addr.sin_family = AF_INET;
+                addr.sin_port = htons(msg->getDstPort());
+                addr.sin_addr.s_addr = htonl(msg->getDstIP()); // already uint32_t in network byte order
+
                 int toSend = (int)msg->getTotalSize();
                 while (toSend > 0 && ctx->running) {
                     int s = sendto(ctx->sock, ptr, toSend, 0, (sockaddr*)&addr, sizeof(addr));
