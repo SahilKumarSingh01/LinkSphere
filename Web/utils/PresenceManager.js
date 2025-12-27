@@ -1,111 +1,314 @@
+import axios from "axios";
+import { MsgType } from "@utils/MessageTypes";
+
 export class PresenceManager {
   constructor(messageHandler) {
     this.messageHandler = messageHandler;
 
-    this.localStatus = new Map();      // key = "ip:port"
-    this.updateReceived = new Map();   // changes to forward
-    this.myIpPort = "";                 // e.g. "127.0.0.1:5173"
-    this.username = "";                 // unique id from cookie/SSC
+    /* ---------------- CONFIG ---------------- */
+ 
+    this.projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
+    this.apiKey    = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
 
-    this.cookies = null;
+    /* ---------------- PRESENCE STATE ---------------- */
+    this.discoveryPort = -1;
+    this.organisationName =  null;
+    this.privateIP = this.messageHandler.getAllIPs()[0]?.ip||null;
+    this.localUsers= new Map();
+    this.accUpdates=[];// it will be json nothing else
+    this.messageHandler.setOnMessageReceive(MsgType.DISCOVERY,this.onDiscoveryMessage.bind(this));
+    this.periodUpdateTimer= setInterval(this.sendPeriodicUpdate.bind(this), 10*1000);
+    // this._init({displayName:"hello how are you"});
+    // console.log("its constructor is called",this.messageHandler.getAllIPs());
   }
 
-  /** Fetch cookie data and initialize localStatus */
-  async initFromCookies() {
-    this.cookies = await this.fetchCookies();
+  // async _init(userInfo) {
+  //   this.setOrganisation(organisationName);
+  //   await this._initUDPConnection();
+  //   await this.updateMyPresence(userInfo);
+  // }
+  
+  setOrganisation(name) { this.organisationName = name; }
 
-    this.cookies.orgUsers.forEach(user => {
-      const key = `${user.ip}:${user.port}`;
-      this.localStatus.set(key, { ...user, lastSeen: -1 });
-      this.updateReceived.set(key, { ...user, lastSeen: -1 });
-    });
+  getOrganisation() { return this.organisationName; }
 
-    this.username = this.cookies.myId;
-    this.myIpPort = this.getOwnIpPort();
+  getIP() { return this.privateIP; }
+
+
+  setIP(index) {
+    const ipObj = this.messageHandler.getAllIPs()[index];
+    if (!ipObj) return false;
+
+    if (this.privateIP === ipObj.ip) return true;
+
+    this.privateIP = ipObj.ip;
+    this.updateMyPresence();
+    return true;
   }
 
-  /** Send presence updates to 3 random online users */
-  sendPeriodicUpdate() {
-    const online = Array.from(this.localStatus.values()).filter(u => u.lastSeen !== -1);
-    const targets = this.pickRandom(online, 3);
 
-    // include own update
-    const myUpdate = this.localStatus.get(this.myIpPort);
-    this.updateReceived.set(this.myIpPort, myUpdate);
+  async _initUDPConnection() {
+    if (!this.organisationName) throw new Error("organisationName is not defined");
 
-    const payload = JSON.stringify(Array.from(this.updateReceived.values()));
+    if (!this.messageHandler ) return;
 
-    targets.forEach(target => {
-      this.messageHandler.sendMessage({
-        src: this.myIp(),
-        srcPort: this.myPort(),
-        dst: this.parseIp(target.ip),
-        dstPort: target.port,
-        type: 0x51, // JSON type
-        payload,
-      });
-    });
+    let port = this.messageHandler.getTCPPort();
+    let success = false;
 
-    this.updateReceived.clear();
-  }
+    while (!success) {
+      try {
+        const result = await this.messageHandler.createConn(
+          MsgType.DISCOVERY,
+          this.messageHandler.iptoi([127, 0, 0, 1]),
+          port,
+          this.messageHandler.iptoi([0, 0, 0, 0]),
+          port
+        );
 
-  /** Handle incoming network updates */
-  handleNetworkUpdate(jsonData) {
-    const updates = JSON.parse(jsonData);
-
-    updates.forEach(u => {
-      const key = `${u.ip}:${u.port}`;
-      const existing = this.localStatus.get(key);
-
-      if (existing) {
-        existing.lastSeen = u.lastSeen;
-        existing.username = u.username;
-        Object.assign(existing, u);
-      } else {
-        this.localStatus.set(key, { ...u });
+        if (result === 1) {
+          success = true;
+          console.log(`[UDP] Connection established:127.0.0.1:${port} → 0.0.0.0:${port}`);
+        } else port++;
+      } catch {
+        port++;
       }
+    }
 
-      this.updateReceived.set(key, { ...u });
-    });
+    this.discoveryPort = port;
   }
 
-  /** Helpers */
-  async fetchCookies() {
+
+  /* ---------------- FIREBASE PRESENCE ---------------- */
+  async updateMyPresence(myInfoUpdate = {}) {
+    if(this.discoveryPort==-1)
+      await this._initUDPConnection();
+    const now = Date.now();
+
+    const DEFAULT_PRESENCE = {
+      tcpPort: this.messageHandler.getTCPPort(),
+      privateIP: this.privateIP,
+      discoveryPort: this.discoveryPort,
+      lastSeen: now
+    };
+
+    let stored = localStorage.getItem("myPresence");
+    let data = stored ? JSON.parse(stored) : null;
+
+    if (!data || !data.MyDiscCred?.idToken) {
+      const renewed = await this.renewToken({presence:JSON.stringify({...DEFAULT_PRESENCE,userInfo:myInfoUpdate})});;
+
+      data = {
+        MyDiscCred: {
+          idToken: renewed.idToken,
+          refreshToken: renewed.refreshToken,
+          expiresIn: renewed.expiresIn,
+          customToken: renewed.customToken,
+          username: renewed.username
+        },
+        
+      };
+    }
+
+    // Refresh token if expired
+    if (Date.now() >= data.MyDiscCred.expiresIn) {
+      const refreshed = await this.refreshToken();
+      data.MyDiscCred.idToken = refreshed.idToken;
+      data.MyDiscCred.refreshToken = refreshed.refreshToken;
+      data.MyDiscCred.expiresIn = refreshed.expiresIn;
+    }
+
+    // Merge any incoming updates into MyDiscInfo
+    data.MyDiscInfo = { ...data.MyDiscInfo,...DEFAULT_PRESENCE,userInfo:{...data.MyDiscInfo?.userInfo,...myInfoUpdate} };
+    data.MyDiscInfo.lastSeen = now;
+
+    localStorage.setItem("myPresence", JSON.stringify(data));
+    // Send entire object as string to Firestore
+    const url =
+      `https://firestore.googleapis.com/v1/projects/${this.projectId}` +
+      `/databases/(default)/documents/organisation/${this.organisationName}` +
+      `/lastSeen/${data.MyDiscCred.username}`;
+
+    return axios.patch(
+      url,
+      {
+        fields: {
+          presence: { stringValue: JSON.stringify(data.MyDiscInfo) },
+        },
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${data.MyDiscCred.idToken}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+  }
+
+
+  async renewToken(userInfo = {}) {
+    const resCustom = await axios.post("/api/token", {
+      organisationName: this.organisationName,
+      privateIP: this.privateIP,
+      userInfo,
+    });
+
+    const customToken = resCustom.data.token;
+    const userId = resCustom.data.userId;
+    const username = userId; // simple identity for now
+
+    const resExchange = await axios.post(
+      `https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${this.apiKey}`,
+      {
+        token: customToken,
+        returnSecureToken: true,
+      }
+    );
+
+    const idToken = resExchange.data.idToken;
+    const refreshToken = resExchange.data.refreshToken;
+    const expiresInSec = Number(resExchange.data.expiresIn) || 3600; // fallback 1h
+    const expiresIn = Date.now() + expiresInSec * 1000 - 2 * 60 * 1000; // minus 2 min
+
+    return { userId, username, customToken, idToken, refreshToken, expiresIn };
+  }
+
+
+  async refreshToken() {
+    let stored = localStorage.getItem("myPresence");
+    let data = stored ? JSON.parse(stored) : null;
+
+    if (!data?.MyDiscCred?.refreshToken) return;
+
+    const params = new URLSearchParams();
+    params.append("grant_type", "refresh_token");
+    params.append("refresh_token", data.MyDiscCred.refreshToken);
+
+    const res = await axios.post(
+      `https://securetoken.googleapis.com/v1/token?key=${this.apiKey}`,
+      params,
+      { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
+    );
+
+    const expiresInSec = Number(res.data.expiresIn) || 3600;
+    const expiresIn = Date.now() + expiresInSec * 1000 - 2 * 60 * 1000;
+
     return {
-      orgUsers: [
-        { ip: "127.0.0.1", port: 5173, lastSeen: 0, username: "userA" },
-        { ip: "127.0.0.2", port: 5173, lastSeen: 0, username: "userB" },
-      ],
-      myId: "me123",
+      idToken: res.data.idToken,
+      refreshToken: res.data.refreshToken,
+      expiresIn
     };
   }
 
+
+  async fetchAllUsers() {
+    let stored = localStorage.getItem("myPresence");
+    let data = stored ? JSON.parse(stored) : null;
+
+    if (!data?.MyDiscCred?.idToken) return;
+
+    // Refresh token if expired
+    if (Date.now() >= data.MyDiscCred.expiresIn) {
+      const refreshed = await this.refreshToken();
+      data.MyDiscCred.idToken = refreshed.idToken;
+      data.MyDiscCred.refreshToken = refreshed.refreshToken;
+      data.MyDiscCred.expiresIn = refreshed.expiresIn;
+      localStorage.setItem("myPresence", JSON.stringify(data));
+    }
+
+    const url =
+      `https://firestore.googleapis.com/v1/projects/${this.projectId}` +
+      `/databases/(default)/documents/organisation/${this.organisationName}/lastSeen`;
+
+    const res = await axios.get(url, {
+      headers: { Authorization: `Bearer ${data.MyDiscCred.idToken}` },
+    });
+    // Each document has a `fields.presence.stringValue`
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+
+    for (const doc of res.data.documents || []) {
+      if (!doc.updateTime) continue;
+      if (Date.parse(doc.updateTime) < cutoff) continue;
+
+      const raw = doc.fields?.presence?.stringValue;
+      if (!raw) continue;
+
+      try {
+        const presence = JSON.parse(raw);
+        const key = presence?.privateIP;
+        if (!key) continue;
+        this.localUsers.set(key, presence);
+      } catch {
+        // skip invalid json
+      }
+    }
+    return [...this.localUsers.values()];
+
+  }
+
+
+  /* ---------------- NETWORK / GOSSIP ---------------- */
+  sendPeriodicUpdate() {
+    // if (!this.MyDiscCred?.username) return;
+  
+    const now = Date.now();
+    const myUpdate = this.localUsers.get(this.privateIP);
+    if(!myUpdate)return;
+    myUpdate.lastSeen=now;
+
+    this.localUsers.set(this.privateIP, myUpdate);
+    this.accUpdates.push(myUpdate);
+
+    const peers = [...this.localUsers.keys()];//.filter(ip => ip !== this.privateIP);
+    const targets = this.pickRandom(peers, 3);
+
+    const payload = JSON.stringify(this.accUpdates);
+
+    targets.forEach(t => {
+      this.messageHandler.sendMessage(
+        this.ipToInt(this.privateIP),
+        this.discoveryPort,
+        this.ipToInt(t),
+        this.localUsers.get(t).discoveryPort,
+        MsgType.DISCOVERY,
+        payload,
+      );
+    });
+    console.log("send period updates is called ",this.accUpdates,targets);
+    this.accUpdates=[];
+  }
+
+
+  onDiscoveryMessage(srcIP,srcPort,dstIP,dstPort,type, payload) {
+
+    if(type!=MsgType.DISCOVERY)
+      throw "Wrong type of message receive in discovery";
+    const decoded = new TextDecoder().decode(payload);
+    const updates = JSON.parse(decoded);
+    const now = Date.now();
+    console.log("update received",updates);
+
+    updates.forEach(u => {
+      const existing = this.localUsers.get(u.privateIP);
+      if (!existing || u.lastSeen > existing.lastSeen) {
+        this.localUsers.set(u.privateIP, {...existing,...u});
+        this.accUpdates.push(u);
+      }
+      
+    });
+
+  }
+
+  /* ---------------- HELPERS ---------------- */
   pickRandom(arr, n) {
     const copy = [...arr];
-    const result = [];
-    while (result.length < n && copy.length > 0) {
-      const idx = Math.floor(Math.random() * copy.length);
-      result.push(copy[idx]);
-      copy.splice(idx, 1);
+    const out = [];
+    while (out.length < n && copy.length) {
+      out.push(copy.splice(Math.floor(Math.random() * copy.length), 1)[0]);
     }
-    return result;
+    return out;
   }
 
-  myIp() {
-    return this.myIpPort.split(":")[0].split(".").map(Number);
-  }
-
-  myPort() {
-    return Number(this.myIpPort.split(":")[1]);
-  }
-
-  parseIp(ip) {
-    return ip.split(".").map(Number);
-  }
-
-  getOwnIpPort() {
-    return this.cookies?.orgUsers[0]
-      ? `${this.cookies.orgUsers[0].ip}:${this.cookies.orgUsers[0].port}`
-      : "127.0.0.1:5173";
+  ipToInt(ip) {
+    return ip.split(".").reduce((acc, oct) => (acc << 8) + Number(oct), 0) >>> 0;
   }
 }

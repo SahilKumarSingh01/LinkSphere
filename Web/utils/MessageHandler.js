@@ -1,6 +1,5 @@
 import { MessageChannel } from "./MessageChannel.js";
 import { MessageBlock } from "./MessageBlock.js";
-// import { MsgType } from "./MessageTypes.js";
 
 export default class MessageHandler {
     constructor() {
@@ -8,295 +7,295 @@ export default class MessageHandler {
         this.onMessageReceiveHandler = new Map();
         this.onNotification = null;
         this.notificationHandlers = new Map();
-        this.port=null;
+        this.port = -1;
         this.localIPs = [];
-        this.defaultIP = null;
-        this._init();
-
+        const arr = new Uint8Array(window.chrome.webview.sharedBuffer);
+        this.channel = new MessageChannel(arr, arr.length, false);
+        window.chrome.webview.addEventListener("message", this._onHostSignal.bind(this));
+        this.setNotificationHandler("close", () => { this.sendNotification("close-current") });
     }
 
     /* ---------------- INIT ---------------- */
 
-    async _init() {
-        const sharedPtr = window.chrome?.webview?.sharedBuffer;
-        if (!sharedPtr) {
-            console.warn("[MessageHandler] No shared buffer");
-            return;
+    // init: Initializes message channel, sets up event listeners, handles IP assignment
+    // No input, no return
+    // Example: automatically called in constructor
+    async init() {
+        await this.refreshIps();
+
+        // Try to start TCP server starting from 5173
+        let port = 5173;
+        while (true) {
+            const result = await this.openExclusiveTCP(port);
+            if (result !== -1) break;
+            port++;
         }
-
-        const arr = new Uint8Array(sharedPtr);
-        this.channel = new MessageChannel(arr, arr.length, false);
-
-        window.chrome.webview.addEventListener(
-            "message",
-            this._onHostSignal.bind(this)
-        );
-
-        console.log("[MessageHandler] Initialized");
-        // Register automatic IpAssigned handler
-        this.setNotificationHandler("IpAssigned", (msg) => {
-            const [ip, iface] = msg.split("|");
-            if (!ip || this.localIPs.some(e => e.ip === ip)) return;
-
-            const obj = { ip, interface: iface || null };
-            this.localIPs.push(obj);
-            if (!this.defaultIP) this.defaultIP = obj;
-        });
-
-
-        // start server automatically
-        this.port = 5173;
-        this.sendNotification("getIp-private");
-        this.tryStartServer();
-    }
-    getAllIPs() {
-        return this.localIPs;
-    }
-    getDefaultIP() {
-        return this.defaultIP;
-    }
-    setDefaultIP(index) {
-        if (index < 0 || index >= this.localIPs.length) return false;
-        this.defaultIP = this.localIPs[index];
-        return true;
-    }
-
-
-    tryStartServer() {
-        const port = this.port;
-
-        const cleanup = () => {
-            this.notificationHandlers.delete("serverStarted");
-            this.notificationHandlers.delete("serverFailed");
-        };
-
-        this.setNotificationHandler("serverStarted", (param) => {
-            if (param === String(port)) {
-                console.log(`[MessageHandler] Server started at port ${port}`);
-                cleanup();
-            }
-        });
-
-        this.setNotificationHandler("serverFailed", (param) => {
-            if (param === String(port)) {
-                cleanup();
-                this.port++;
-                setTimeout(() => this.tryStartServer(), 0);
-            }
-        });
-
-        this.sendNotification(`startTCP-${port}`);
     }
 
 
     /* ---------------- HOST → JS ---------------- */
 
-    _onHostSignal(event) {
-        // console.log("we are getting an event");
-        if (event.data !== "dataReady") {
-            const msg = String(event.data);
-            const i = msg.indexOf("-");
-            const handler =
-                i !== -1 && this.notificationHandlers.get(msg.slice(0, i));
+    // _onHostSignal: Handles incoming messages and notifications from native host
+    // Input: event (MessageEvent), Output: none
+    // Example: called by 'message' event listener
+    
+    async _onHostSignal(event) {
+        const msg = String(event.data);
 
-            if (handler) {
-                handler(msg.slice(i + 1));
-                return;
-            }
-            // fallback
-            if (this.onNotification) {
-                this.onNotification(msg);
-            }
+        // Handle notifications first
+        if (msg !== "dataReady") {
+            const sep = msg.indexOf("-");
+            const handler = sep !== -1 ? this.notificationHandlers.get(msg.slice(0, sep)) : null;
+            if (handler) return handler(msg.slice(sep + 1));
+            if (this.onNotification) return this.onNotification(msg);
         }
 
         if (!this.channel) return;
 
-        while (true) {
-            const size = this.channel.sizeofNextMessage();
-            if (size <= 0) break;
-
+        // Process all messages in buffer
+        let size;
+        while ((size = this.channel.sizeofNextMessage()) > 0) {
             const buf = new Uint8Array(size);
             this.channel.readBuf(buf, size);
 
             try {
                 const block = new MessageBlock(buf);
-                // console.log(block);
                 const handler = this.onMessageReceiveHandler.get(block.getType());
-                if(!handler)continue;
-                handler({
-                    src: block.getSrcIP(),
-                    srcPort: block.getSrcPort(),
-                    dst: block.getDstIP(),
-                    dstPort: block.getDstPort(),
-                    type: block.getType(),
-                    payload: block.getPayload()
-                })
-                // this._emit(msg);
+                if (!handler) continue;
+
+                handler(block.getSrcIP(),block.getSrcPort(),block.getDstIP(),
+                    block.getDstPort(),block.getType(), block.getPayload());
             } catch (e) {
                 console.error("[MessageHandler] Invalid message", e);
             }
         }
     }
 
-    setNotificationHandler(event, handler) {
-        this.notificationHandlers.set(event, handler);
-    }
-
-
-    setOnMessageReceive(type, callback) {
-        // Check if the type exists in MsgType
-        // if (!Object.values(MsgType).includes(type)) {
-        //     console.warn(`[MessageHandler] Invalid message type: ${type}`);
-        //     return;
-        // }
-
-        this.onMessageReceiveHandler.set(type, callback); // overwrite existing handler
-    }
-
-    setOnNotification(callback) {
-        this.onNotification = callback;
-    }
-
-    sendMessage({
-        src,
-        srcPort,
-        dst,
-        dstPort,
-        type,
-        payload,
-    }) {
+    // sendMessage: Sends a message block to native
+    // Input: src, srcPort, dst, dstPort, type, payload (string or Uint8Array)
+    // Output: boolean (true if sent, false if buffer full)
+    // Example: sendMessage(3232235521, 5173, 3232235522, 6000, 1, "Hello")
+    async sendMessage(src, srcPort, dst, dstPort, type, payload) {
         if (!this.channel) return false;
 
-        const payloadBytes =
-            payload instanceof Uint8Array
-                ? payload
-                : new TextEncoder().encode(payload);
-
+        const payloadBytes = payload instanceof Uint8Array ? payload : new TextEncoder().encode(payload);
         const totalSize = 17 + payloadBytes.length;
-        // console.log("totalSize of message", totalSize);
 
-        // create MessageBlock directly with total size
-        const msg = new MessageBlock(totalSize); // automatically sets totalSize
+        const msg = new MessageBlock(totalSize);
         msg.setType(type);
         msg.setSrc(src, srcPort);
         msg.setDst(dst, dstPort);
         msg.setPayload(payloadBytes);
 
-        // write the internal buffer directly
         const written = this.channel.writeBuf(msg.getRawData(), totalSize);
         if (written <= 0) {
             console.error("[MessageHandler] Buffer full");
             return false;
         }
+
         window.chrome.webview.postMessage("dataReady");
         return true;
     }
 
-    /* ---------------- NOTIFICATION CONTROL ---------------- */
-
+    // sendNotification: Sends simple string notification to native
+    // Input: data (string, default: "dataReady"), Output: none
+    // Example: sendNotification("close-current")
     sendNotification(data = "dataReady") {
-        console.log("Notification sedns",data);
         window.chrome.webview.postMessage(data);
     }
+
+    // refreshIps: Requests current IPs from native
+    // No input, no return
+    // Example: refreshIps()
+    refreshIps() {
+        return new Promise((resolve, reject) => {
+            this.localIPs = [];
+
+            const handler = (msg) => {
+            if (msg === "done") {
+                this.removeNotificationHandler("IpAssigned", handler);
+                resolve(this.localIPs);
+                return;
+            }
+
+            const [ip, iface] = msg.split("|");
+            if (!ip || this.localIPs.some(e => e.ip === ip)) return;
+
+            this.localIPs.push({ ip, interface: iface || null });
+            };
+
+            this.setNotificationHandler("IpAssigned", handler);
+            this.sendNotification("getIp-private");
+        });
+    }
+
+
+    // getAllIPs: Returns array of assigned IPs
+    // Output: Array of {ip, interface}
+    // Example: getAllIPs() => [{ip:"192.168.0.10", interface:"eth0"}]
+    getAllIPs = () => this.localIPs;
+
+
+    // getTCPPort: Returns current TCP server port
+    // Output: number
+    // Example: getTCPPort() => 5173
+    getTCPPort = () => this.port;
+
+    // iptoi: Converts array [x1,x2,x3,x4] to integer
+    // Input: array of 4 numbers, Output: number
+    // Example: iptoi([192,168,0,1]) => 3232235521
+    iptoi = ip => ((ip[0] << 24) | (ip[1] << 16) | (ip[2] << 8) | ip[3]) >>> 0;
+
+    // itoip: Converts integer to array of 4 numbers
+    // Input: number, Output: array of 4 numbers
+    // Example: itoip(3232235521) => [192,168,0,1]
+    itoip = n => [n >>> 24, n >>> 16 & 0xff, n >>> 8 & 0xff, n & 0xff];
+
+    /* ---------------- REMOVE HANDLERS ---------------- */
+
+    // removeMessageHandler: Removes handler for a message type
+    // Input: type (number)
+    // Example: removeMessageHandler(1)
+    removeMessageHandler(type) { this.onMessageReceiveHandler.delete(type); }
+
+    // removeNotificationHandler: Removes handler for a notification
+    // Input: event (string)
+    // Example: removeNotificationHandler("IpAssigned")
+    removeNotificationHandler(event) { this.notificationHandlers.delete(event); }
+
+    /* ---------------- TCP CONTROL ---------------- */
+
+    // openExclusiveTCP: Tries to start TCP server on given port
+    // Input: port (number)
+    // Output: Promise<number> (port if success, -1 if fail)
+    // Example: await openExclusiveTCP(5173)
+    openExclusiveTCP(port) {
+        return new Promise((resolve) => {
+            const cleanup = () => {
+                this.notificationHandlers.delete("serverStarted");
+                this.notificationHandlers.delete("serverFailed");
+            };
+
+            this.setNotificationHandler("serverStarted", (param) => {
+                if (param === String(port)) {
+                    cleanup();
+                    this.port = port;
+                    resolve(port);
+                }
+            });
+
+            this.setNotificationHandler("serverFailed", (param) => {
+                if (param === String(port)) {
+                    cleanup();
+                    this.port = -1;
+                    resolve(-1);
+                }
+            });
+
+            this.sendNotification(`startTCP-${port}`);
+        });
+    }
+
+    /* ---------------- MOUSE & KEYBOARD ---------------- */
+
+    mouseMove = (x, y) => this.sendNotification(`mouseMove-${x},${y}`); // Example: mouseMove(100, 200)
+    mouseLeft = () => this.sendNotification("mouseLeft");
+    mouseRight = () => this.sendNotification("mouseRight");
+    mouseScroll = d => this.sendNotification(`mouseScroll-${d}`); // Example: mouseScroll(5)
+    keyDown = k => this.sendNotification(`keyDown-${k}`); // Example: keyDown(65)
+    keyUp = k => this.sendNotification(`keyUp-${k}`); // Example: keyUp(65)
+    keyPress = k => this.sendNotification(`keyPress-${k}`); // Example: keyPress(65)
+
+    /* ---------------- CONNECTION CONTROL ---------------- */
+
+    // createConn: Requests native to create connection
+    // Input: type, srcIP, srcPort, dstIP, dstPort
+    // Output: Promise<number> (1 if success, 0 if fail)
+    // Example: await createConn(1, 3232235521, 5173, 3232235522, 6000)
+    createConn(type, sip, sp, dip, dp) {
+        return new Promise((resolve) => {
+            const key = `${type}::${sip}:${sp}::${dip}:${dp}`;
+
+            const handler = (param) => {
+                this.removeNotificationHandler(key);
+                resolve(param.endsWith("create-success") ? 1 : 0);
+            };
+
+            this.setNotificationHandler(key, handler);
+            this.sendNotification(`createConn-${type}-${sip}-${sp}-${dip}-${dp}`);
+        });
+    }
+
+    // onSendFailed: Sets/removes callback for a send failure for a connection
+    // Input: type, srcIP, srcPort, dstIP, dstPort, cb (function or null)
+    // Example: onSendFailed(1, 3232235521, 5173, 3232235522, 6000, cb)
+    onSendFailed(type, srcIP, srcPort, dstIP, dstPort, cb) {
+        const key = `${type}::${srcIP}:${srcPort}::${dstIP}:${dstPort}`;
+        if (cb) this.setNotificationHandler(key, cb);
+        else this.removeNotificationHandler(key);
+    }
+
+    // removeConn: Requests native to remove connection
+    // Input: type, srcIP, srcPort, dstIP, dstPort
+    // Output: Promise<number> (1 if success, 0 if fail)
+    // Example: await removeConn(1, 3232235521, 5173, 3232235522, 6000)
+    removeConn(type, sip, sp, dip, dp) {
+        return new Promise((resolve) => {
+            const key = `${type}::${sip}:${sp}::${dip}:${dp}`;
+
+            const handler = (param) => {
+                this.removeNotificationHandler(key);
+                resolve(param.endsWith("removeConn-success") ? 1 : 0);
+            };
+
+            this.setNotificationHandler(key, handler);
+            this.sendNotification(`removeConn-${type}-${sip}-${sp}-${dip}-${dp}`);
+        });
+    }
+
+
+    /* ---------------- HANDLER REGISTRATION ---------------- */
+
+    // setNotificationHandler: Sets handler for a specific notification
+    // Input: event (string), handler (function receiving notification payload as string)
+    // Example: setNotificationHandler("IpAssigned", msg => console.log(msg))
+    // Notification payload examples:
+    // "IpAssigned" => "192.168.0.10|eth0"
+    // "serverStarted" => "5173"
+    // "Error" => "Failed to start server"
+    setNotificationHandler(event, handler) { this.notificationHandlers.set(event, handler); }
+
+    // setOnMessageReceive: Sets handler for a message type
+    // Input: type (number), callback (function receiving positional message arguments)
+    // Example: setOnMessageReceive(1, (src, srcPort, dst, dstPort, type, payload) => console.log(src, dst, payload))
+    // Callback argument format:
+    // src: number (IP as integer)
+    // srcPort: number
+    // dst: number (IP as integer)
+    // dstPort: number
+    // type: number
+    // payload: Uint8Array
+    setOnMessageReceive(type, callback) { this.onMessageReceiveHandler.set(type, callback); }
+
+    // setOnNotification: Sets fallback handler for unknown notifications
+    // Input: callback (function receiving raw notification string)
+    // Example: setOnNotification(msg => console.log(msg))
+    // msg could be any notification string sent by native, e.g., "dataReady", "close-current"
+    setOnNotification(callback) { this.onNotification = callback; }
+
+
+    /* ---------------- CALLBACKS ---------------- */
+
+    // onError: Sets or removes callback for errors
+    // Input: cb (function receiving error message string) or null
+    // Example: onError(msg => console.log(msg))
+    // Error messages could be "Failed to start server", "Connection lost", etc.
+    onError(cb) { cb ? this.setNotificationHandler("Error", cb) : this.removeNotificationHandler("Error"); }
+
+    // onClientConnected: Sets or removes callback for client connection
+    // Input: cb (function receiving client info as string) or null
+    // Example: onClientConnected(msg => console.log(msg))
+    // msg could be "3232235522:6000" (client IP and port)
+    onClientConnected(cb) { cb ? this.setNotificationHandler("connected", cb) : this.removeNotificationHandler("connected"); }
+
 }
-
-// /* ---------------- SINGLETON EXPORT ---------------- */
-
-// export const messageHandler = new MessageHandler();
-
-/*
-TRANSPORT & MESSAGE CONVENTIONS
--------------------------------
-
-1) Message Type (8th bit)
-   - The 8th bit of `type` decides protocol:
-     • 0 → UDP
-     • 1 → TCP
-
-2) TCP Behavior
-   - `srcPort` has ONLY two valid values:
-     • 0          → send as TCP client
-     • this.port  → send as TCP server
-
-   - Client mode:
-     • If not connected, native auto-connects before sending.
-
-   - Server mode:
-     • No auto-connect.
-     • Message is sent only if connection already exists.
-
-3) UDP Behavior
-   - UDP messages are always received on the SAME port
-     from which the sender sent the UDP packet.
-   - No connection state is maintained.
-*/
-/*
-NATIVE EVENTS & PARAMS
----------------------
-
-Event: startTCP
-Param: <port>
-Example: "startTCP-5173"
-Effect:
-- Starts TCP server on given port.
-- Native responds with: "serverStarted-<port>" on success.
-
-Event: getIp
-Param: none
-Example: "getIp"
-Effect:
-- Native sends one or more:
-  "IpAssigned-<ip>|<interface>"
-
-Event: mouseMove
-Param: "<x>,<y>"
-Example: "mouseMove-120,450"
-Effect:
-- Moves mouse to screen coordinates.
-
-Event: mouseLeft
-Param: none
-Effect:
-- Performs left mouse click.
-
-Event: mouseRight
-Param: none
-Effect:
-- Performs right mouse click.
-
-Event: mouseScroll
-Param: <delta>
-Example: "mouseScroll--120"
-Effect:
-- Scrolls mouse wheel by delta.
-
-Event: keyDown
-Param: <virtualKeyCode>
-Effect:
-- Key down event.
-
-Event: keyUp
-Param: <virtualKeyCode>
-Effect:
-- Key up event.
-
-Event: keyPress
-Param: <virtualKeyCode>
-Effect:
-- Key press (down + up).
-
-Event: removeConn
-Param: "<type>-<srcIP>-<srcPort>-<dstIP>-<dstPort>"
-Example:
-"removeConn-1-192.168.1.10-5173-192.168.1.20-6000"
-Effect:
-- Removes TCP/UDP connection.
-- Native responds with:
-  • "connectionRemoved"
-  • "connectionNotFound"
-
-Event: close
-Param: none
-Effect:
-- Closes native application.
-*/

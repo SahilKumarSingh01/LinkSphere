@@ -54,6 +54,7 @@ void onBrowserMessage(const BYTE* d, uint32_t s) {
     if (!success && g_browser) {
         MessageBlock msg(d, s);
         std::string failMsg =
+            std::to_string(msg.getType())+"::"+
             std::to_string(msg.getSrcIP()) + ":" +
             std::to_string(msg.getSrcPort()) + "::" +
             std::to_string(msg.getDstIP()) + ":" +
@@ -90,7 +91,7 @@ void onClientConnect(const wstring & t) {
 
 int main() {
     //std::cout<<std::thread::hardware_concurrency() << std::endl;;
-    std::wstring url = L"http://localhost:3000/testing";
+    std::wstring url = L"http://localhost:3000/";
 
     BrowserWithMessaging browser(url, L"LinkSphere", 1000, 700, IDI_WINDOWSPROJECT1);
     g_browser = &browser;
@@ -112,6 +113,7 @@ int main() {
     setEventHandler(L"getIp", [](const std::wstring&) {
         if (!g_browser) return;
         for (auto& ip : getLocalIPs()) g_browser->notify((L"IpAssigned-" + ip).c_str());
+        g_browser->notify(L"IpAssigned-done");
         });
 
     setEventHandler(L"mouseMove", [](const std::wstring& p) {
@@ -121,7 +123,7 @@ int main() {
     setEventHandler(L"mouseLeft", [](const std::wstring&) { leftClick(); });
     setEventHandler(L"mouseRight", [](const std::wstring&) { rightClick(); });
     setEventHandler(L"mouseScroll", [](const std::wstring& p) { scrollMouse(std::stoi(p)); });
-    setEventHandler(L"keyDown", [](const std::wstring& p) { keyDown((WORD)std::stoi(p)); std::cout << std::stoi(p) << std ::endl; });
+    setEventHandler(L"keyDown", [](const std::wstring& p) { keyDown((WORD)std::stoi(p)); });
     setEventHandler(L"keyUp", [](const std::wstring& p) { keyUp((WORD)std::stoi(p)); });
     setEventHandler(L"keyPress", [](const std::wstring& p) { keyPress((WORD)std::stoi(p)); });
 
@@ -130,7 +132,7 @@ int main() {
         uint8_t t = 0; uint16_t sp = 0, dp = 0; uint32_t sip = 0, dip = 0;
         swscanf_s(p.c_str(), L"%hhu-%u-%hu-%u-%hu", &t, &sip, &sp, &dip, &dp);
         g_browser->notify(
-            (std::to_wstring(sip) + L":" + std::to_wstring(sp) + L"::" +
+            (std::to_wstring(t) + L"::" + std::to_wstring(sip) + L":" + std::to_wstring(sp) + L"::" +
                 std::to_wstring(dip) + L":" + std::to_wstring(dp) +
                 (g_net->removeConnection(t, sip, sp, dip, dp) ? L"-removeConn-success" : L"-removeConn-failed")).c_str()
         );
@@ -143,7 +145,7 @@ int main() {
         swscanf_s(p.c_str(), L"%hhu-%u-%hu-%u-%hu", &t, &sip, &sp, &dip, &dp);
         ConnectionContext* ctx = g_net->createConnection(t, sip, sp, dip, dp);
         g_browser->notify(
-            (std::to_wstring(sip) + L":" + std::to_wstring(sp) + L"::" +
+            (std::to_wstring(t) + L"::" + std::to_wstring(sip) + L":" + std::to_wstring(sp) + L"::" +
                 std::to_wstring(dip) + L":" + std::to_wstring(dp) +
                 (ctx ? L"-create-success" : L"-create-failed")).c_str()
         );

@@ -2,6 +2,7 @@ export const MsgType = Object.freeze({
   // -------------------
   // Control / Input
   // -------------------
+  DISCOVERY : 10,
   MOUSE_MOVE:   0x10,
   MOUSE_BUTTON: 0x11,
   MOUSE_SCROLL: 0x12,

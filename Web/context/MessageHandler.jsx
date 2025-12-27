@@ -11,11 +11,15 @@ export function MessageHandlerProvider({ children }) {
 
     useEffect(() => {
         if (typeof window === "undefined") return;
-
-        if (!handlerRef.current) {
-            handlerRef.current = new MessageHandler();
-            setMessageHandler(handlerRef.current); // trigger re-render
-        }
+        (
+           async()=>{
+            if (!handlerRef.current) {
+                handlerRef.current = new MessageHandler();
+                await handlerRef.current.init();
+                setMessageHandler(handlerRef.current); // trigger re-render
+            };
+            }
+        )()
     }, []);
 
     return (
