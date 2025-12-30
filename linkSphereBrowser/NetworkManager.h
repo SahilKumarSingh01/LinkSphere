@@ -140,6 +140,10 @@ public:
             if (onError) onError("TCP Server: Failed to create socket");
             return false;
         }
+        // Disable Nagle
+        BOOL flag = TRUE;
+        setsockopt(tcpServerSock, IPPROTO_TCP, TCP_NODELAY,
+            (char*)&flag, sizeof(flag));
 
         sockaddr_in addr{};
         addr.sin_family = AF_INET;

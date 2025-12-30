@@ -58,6 +58,11 @@ public:
             return nullptr;
         }
 
+        // Disable Nagle
+        BOOL flag = TRUE;
+        setsockopt(s, IPPROTO_TCP, TCP_NODELAY,
+            (char*)&flag, sizeof(flag));
+
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
         addr.sin_port = htons(destPort);

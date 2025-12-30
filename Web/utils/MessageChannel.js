@@ -1,8 +1,8 @@
+import { Mutex } from "@utils/Mutex.js"; 
 export class MessageChannel {
     constructor(sharedPtr, totalSize, isLeftMaster) {
         if (!sharedPtr) throw "null";
         if (totalSize < 18) throw "small";
-
         const half = Math.floor(totalSize / 2);
 
         const leftDataRegionSize = half - 9;
@@ -51,10 +51,23 @@ export class MessageChannel {
             this.slaveRead = rightRead;
             this.slaveDataRegionSize = leftDataRegionSize;
         }
+        this.readLock = new Mutex();
+        this.writeLock = new Mutex();
+        console.log(Mutex);
+
     }
 
     // --- Master writing ---
-    availableToWrite() {
+    async availableToWrite() {
+        await this.writeLock.lock();
+        try {
+            return this.availableToWriteUnsafe();
+        } finally {
+            this.writeLock.unlock();
+        }
+    }
+
+    availableToWriteUnsafe() {
         const r = this.load32(this.slaveRead);
         const w = this.load32(this.masterWrite);
 
@@ -65,61 +78,113 @@ export class MessageChannel {
         return this.masterDataRegionSize - 1 - used;
     }
 
-    writeBuf(src, size) {
-        if (!src || size === 0 || this.availableToWrite() < size + 4)
-            return 0;
+    async writeBuf(src, size) {
+        await this.writeLock.lock();
+        try {
+            if (!src || size === 0 || this.availableToWriteUnsafe() < size + 4)
+                return 0;
 
-        let w = this.load32(this.masterWrite);
+            let w = this.load32(this.masterWrite);
 
-        this.writeRegion(this.masterData, this.masterDataRegionSize, w, this.u32ToBytes(size), 4);
-        w = (w + 4) % this.masterDataRegionSize;
+            this.writeRegion(
+                this.masterData,
+                this.masterDataRegionSize,
+                w,
+                this.u32ToBytes(size),
+                4
+            );
+            w = (w + 4) % this.masterDataRegionSize;
 
-        this.writeRegion(this.masterData, this.masterDataRegionSize, w, src, size);
-        w = (w + size) % this.masterDataRegionSize;
+            this.writeRegion(
+                this.masterData,
+                this.masterDataRegionSize,
+                w,
+                src,
+                size
+            );
+            w = (w + size) % this.masterDataRegionSize;
 
-        this.store32(this.masterWrite, w);
-        this.shared[this.masterFlag] |= 1;
+            this.store32(this.masterWrite, w);
+            this.shared[this.masterFlag] |= 1;
+            return size;
+        } finally {
+            this.writeLock.unlock();
+        }
 
-        return size;
     }
 
+
     // --- Master reading ---
-    availableToRead() {
+    async availableToRead() {
+        await this.readLock.lock();
+        try {
+            return this.availableToReadUnsafe();
+        } finally {
+            this.readLock.unlock();
+        }
+    }
+
+    availableToReadUnsafe() {
         const r = this.load32(this.masterRead);
         const w = this.load32(this.slaveWrite);
 
-        return (w >= r) ? (w - r) : (this.slaveDataRegionSize - (r - w));
+        return (w >= r)
+            ? (w - r)
+            : (this.slaveDataRegionSize - (r - w));
     }
 
-    sizeofNextMessage() {
-        if (this.availableToRead() < 4) return 0;
+    async sizeofNextMessage() {
+        await this.readLock.lock();
+        try {
+            if (this.availableToReadUnsafe() < 4) return 0;
 
-        const r = this.load32(this.masterRead);
-        let sz = this.read32Wrapped(this.slaveData, this.slaveDataRegionSize, r);
-
-        return sz;
+            const r = this.load32(this.masterRead);
+            return this.read32Wrapped(
+                this.slaveData,
+                this.slaveDataRegionSize,
+                r
+            );
+        } finally {
+            this.readLock.unlock();
+        }
     }
 
-    readBuf(dst, maxLen) {
-        const avail = this.availableToRead();
-        if (avail < 4) return 0;
+    async readBuf(dst, maxLen) {
+        await this.readLock.lock();
+        try {
+            const avail = this.availableToReadUnsafe();
+            if (avail < 4) return 0;
 
-        let r = this.load32(this.masterRead);
-        let sz = this.read32Wrapped(this.slaveData, this.slaveDataRegionSize, r);
+            let r = this.load32(this.masterRead);
+            let sz = this.read32Wrapped(
+                this.slaveData,
+                this.slaveDataRegionSize,
+                r
+            );
 
-        if (sz === 0 || sz > maxLen) return 0;
-        if (avail < sz + 4) return 0;
+            if (sz === 0 || sz > maxLen) return 0;
+            if (avail < sz + 4) return 0;
 
-        r = (r + 4) % this.slaveDataRegionSize;
+            r = (r + 4) % this.slaveDataRegionSize;
 
-        this.readRegion(this.slaveData, this.slaveDataRegionSize, r, dst, sz);
-        r = (r + sz) % this.slaveDataRegionSize;
+            this.readRegion(
+                this.slaveData,
+                this.slaveDataRegionSize,
+                r,
+                dst,
+                sz
+            );
+            r = (r + sz) % this.slaveDataRegionSize;
 
-        this.store32(this.masterRead, r);
-        this.shared[this.slaveFlag] = 1;
+            this.store32(this.masterRead, r);
+            this.shared[this.slaveFlag] = 1;
 
-        return sz;
+            return sz;
+        } finally {
+            this.readLock.unlock();
+        }
     }
+
 
     getMasterFlagPtr() {
         return this.masterFlag;

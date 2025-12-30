@@ -54,9 +54,9 @@ export default class MessageHandler {
 
         // Process all messages in buffer
         let size;
-        while ((size = this.channel.sizeofNextMessage()) > 0) {
+        while ((size = await this.channel.sizeofNextMessage()) > 0) {
             const buf = new Uint8Array(size);
-            this.channel.readBuf(buf, size);
+            await this.channel.readBuf(buf, size);
 
             try {
                 const block = new MessageBlock(buf);
@@ -87,7 +87,7 @@ export default class MessageHandler {
         msg.setDst(dst, dstPort);
         msg.setPayload(payloadBytes);
 
-        const written = this.channel.writeBuf(msg.getRawData(), totalSize);
+        const written = await this.channel.writeBuf(msg.getRawData(), totalSize);
         if (written <= 0) {
             console.error("[MessageHandler] Buffer full");
             return false;
