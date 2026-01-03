@@ -1,24 +1,28 @@
 import 'server-only'
 import admin from "firebase-admin";
 import { NextRequest } from 'next/server';
+import { db } from '../../../lib/firebase.js';
+import { exportTraceState } from 'next/dist/trace/trace.js';
+import imageUploaderHandler from '@utils/imageUploaderHandler.js';
+import imageDeleteHandler from '@utils/imageDeleteHandler.js';
 export const runtime = "nodejs";
-if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.cert({
-      type: process.env.NEXT_FIREBASE_ADMIN_TYPE,
-      project_id: process.env.NEXT_FIREBASE_ADMIN_PROJECT_ID,
-      private_key_id: process.env.NEXT_FIREBASE_ADMIN_PRIVATE_KEY_ID,
-      private_key: process.env.NEXT_FIREBASE_ADMIN_PRIVATE_KEY.replace(/\\n/g, "\n"), // important
-      client_email: process.env.NEXT_FIREBASE_ADMIN_CLIENT_EMAIL,
-      client_id: process.env.NEXT_FIREBASE_ADMIN_CLIENT_ID,
-      auth_uri: process.env.NEXT_FIREBASE_ADMIN_AUTH_URI,
-      token_uri: process.env.NEXT_FIREBASE_ADMIN_TOKEN_URI,
-      auth_provider_x509_cert_url: process.env.NEXT_FIREBASE_ADMIN_AUTH_PROVIDER_X509_CERT_URL,
-      client_x509_cert_url: process.env.NEXT_FIREBASE_ADMIN_CLIENT_X509_CERT_URL,
-      universe_domain: process.env.NEXT_FIREBASE_ADMIN_UNIVERSE_DOMAIN,
-    }),
-  });
-}
+// if (!admin.apps.length) {
+//   admin.initializeApp({
+//     credential: admin.credential.cert({
+//       type: process.env.NEXT_FIREBASE_ADMIN_TYPE,
+//       project_id: process.env.NEXT_FIREBASE_ADMIN_PROJECT_ID,
+//       private_key_id: process.env.NEXT_FIREBASE_ADMIN_PRIVATE_KEY_ID,
+//       private_key: process.env.NEXT_FIREBASE_ADMIN_PRIVATE_KEY.replace(/\\n/g, "\n"), // important
+//       client_email: process.env.NEXT_FIREBASE_ADMIN_CLIENT_EMAIL,
+//       client_id: process.env.NEXT_FIREBASE_ADMIN_CLIENT_ID,
+//       auth_uri: process.env.NEXT_FIREBASE_ADMIN_AUTH_URI,
+//       token_uri: process.env.NEXT_FIREBASE_ADMIN_TOKEN_URI,
+//       auth_provider_x509_cert_url: process.env.NEXT_FIREBASE_ADMIN_AUTH_PROVIDER_X509_CERT_URL,
+//       client_x509_cert_url: process.env.NEXT_FIREBASE_ADMIN_CLIENT_X509_CERT_URL,
+//       universe_domain: process.env.NEXT_FIREBASE_ADMIN_UNIVERSE_DOMAIN,
+//     }),
+//   });
+// }
 
 export async function POST(req) {
   try {
@@ -47,7 +51,7 @@ export async function POST(req) {
     const customToken = await admin.auth().createCustomToken(uid);
 
     // 2️⃣ Create Firestore document immediately
-    const userRef = admin.firestore().collection("organisation").doc(organisationName).collection("lastSeen").doc(uid);
+    const userRef = db.collection("organisation").doc(organisationName).collection("lastSeen").doc(uid);
     await userRef.set(userInfo, { merge: true }); // merge: true ensures we don't overwrite existing fields
 
     return new Response(
@@ -68,6 +72,46 @@ export async function POST(req) {
         status: 500,
         headers: { "Content-Type": "application/json" },
       }
+    );
+  }
+}
+
+export async function PATCH(req) {
+  try {
+    const formData = await req.formData();
+    const base64String=formData.get("base64String");
+    //console.log("base64String:",base64String);
+    const res=await imageUploaderHandler(base64String);
+
+    //console.log("res:",res);
+
+
+    return Response.json(
+      { message: "Successfully uploaded pic" },
+      { status: 200 }
+    );
+  } catch (error) {
+    return Response.json(
+      { error: error.message || "Internal Server Error" },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(req) {
+  try {
+    
+   
+    const res=await imageDeleteHandler();
+
+    return Response.json(
+      { message: "Successfully deleted pic" },
+      { status: 200 }
+    );
+  } catch (error) {
+    return Response.json(
+      { error: error.message || "Internal Server Error" },
+      { status: 500 }
     );
   }
 }
