@@ -1,5 +1,6 @@
 #include <cstdint>
 #include <cstring>
+#include <mutex>
 using BYTE = uint8_t;
 
 class MessageChannel
@@ -73,18 +74,17 @@ public:
     }
 
     // --- Master writing ---
-    size_t availableToWrite() const
+    size_t availableToWrite()
     {
-        uint32_t r = load32(slaveRead);  // what slave has read
-        uint32_t w = load32(masterWrite);
-
-        uint32_t used = (w >= r) ? (w - r) : (masterDataRegionSize - (r - w));//-1 to differ empty and full
-        return masterDataRegionSize - 1 - used;// as four bytes is needed for size of data; 
+        std::lock_guard<std::mutex> lock(writeLock);
+        return availableToWriteUnsafe();
     }
 
     int writeBuf(const BYTE* src, uint32_t size)
     {
-        if (!src || size == 0 || availableToWrite() < size + 4 ) return 0; 
+        std::lock_guard<std::mutex> lock(writeLock);
+
+        if (!src || size == 0 || availableToWriteUnsafe() < size + 4 ) return 0; 
 
         uint32_t w = load32(masterWrite);
 
@@ -102,17 +102,18 @@ public:
 
 
     // --- Master reading from slave ---
-    size_t availableToRead() const
+    size_t availableToRead()
     {
-        uint32_t r = load32(masterRead);
-        uint32_t w = load32(slaveWrite);
-
-        return (w >= r) ? (w - r) : (slaveDataRegionSize - (r - w));
+        std::lock_guard<std::mutex> lock(readLock);
+        return availableToReadUnsafe();
+        
     }
 
-    uint32_t sizeofNextMessage() const
+    uint32_t sizeofNextMessage()
     {
-        if (availableToRead() < 4) return 0;
+        std::lock_guard<std::mutex> lock(readLock);
+
+        if (availableToReadUnsafe() < 4) return 0;
 
         uint32_t r = load32(masterRead);
         uint32_t sz = 0;
@@ -126,7 +127,10 @@ public:
 
     int readBuf(BYTE* dst, uint32_t maxLen)
     {
-        uint32_t avail = (uint32_t)availableToRead();
+        std::lock_guard<std::mutex> lock(readLock);
+
+        uint32_t avail = (uint32_t)availableToReadUnsafe();
+
         if (avail < 4) return 0; // not enough for header
 
         uint32_t r = load32(masterRead);
@@ -172,6 +176,26 @@ private:
     BYTE* slaveWrite;    // slave writes here
     BYTE* slaveData;
     uint32_t slaveDataRegionSize;
+
+    std::mutex readLock;
+    std::mutex writeLock;
+
+    size_t availableToWriteUnsafe() const 
+    {
+        uint32_t r = load32(slaveRead);  // what slave has read
+        uint32_t w = load32(masterWrite);
+
+        uint32_t used = (w >= r) ? (w - r) : (masterDataRegionSize - (r - w));//-1 to differ empty and full
+        return masterDataRegionSize - 1 - used;// as four bytes is needed for size of data; 
+    }
+
+    size_t availableToReadUnsafe() const
+    {
+        uint32_t r = load32(masterRead);
+        uint32_t w = load32(slaveWrite);
+
+        return (w >= r) ? (w - r) : (slaveDataRegionSize - (r - w));
+    }
 
     // --- Helpers ---
     static uint32_t load32(BYTE* p)

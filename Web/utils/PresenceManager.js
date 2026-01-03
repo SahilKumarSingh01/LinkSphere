@@ -21,12 +21,6 @@ export class PresenceManager {
     // this._init({displayName:"hello how are you"});
     // console.log("its constructor is called",this.messageHandler.getAllIPs());
   }
-
-  // async _init(userInfo) {
-  //   this.setOrganisation(organisationName);
-  //   await this._initUDPConnection();
-  //   await this.updateMyPresence(userInfo);
-  // }
   
   setOrganisation(name) { this.organisationName = name; }
 
@@ -34,17 +28,10 @@ export class PresenceManager {
 
   getIP() { return this.privateIP; }
 
-
-  setIP(index) {
-    const ipObj = this.messageHandler.getAllIPs()[index];
-    if (!ipObj) return false;
-
-    if (this.privateIP === ipObj.ip) return true;
-
-    this.privateIP = ipObj.ip;
-    this.updateMyPresence();
-    return true;
-  }
+  setIP = (index) => {
+    const ip = this.messageHandler.getAllIPs()?.[index]?.ip;
+    return ip ? (this.privateIP === ip ? true : (this.privateIP = ip, this.updateMyPresence(), true)) : false;
+  };
 
 
   async _initUDPConnection() {
@@ -258,7 +245,7 @@ export class PresenceManager {
     this.localUsers.set(this.privateIP, myUpdate);
     this.accUpdates.push(myUpdate);
 
-    const peers = [...this.localUsers.keys()];//.filter(ip => ip !== this.privateIP);
+    const peers = [...this.localUsers.keys()];//.filter(ip => ip !== this.privateIP); //remove this comment 
     const targets = this.pickRandom(peers, 3);
 
     const payload = JSON.stringify(this.accUpdates);
