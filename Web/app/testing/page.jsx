@@ -38,9 +38,9 @@ export default function NativeInteractiveTest() {
     handler.setNotificationHandler("received-failed", (param) =>
       log(`[REMOVE_CONN] Failed: ${param}`)
     );
-    handler.setNotificationHandler("connected", (param) =>
-      log(`[CLIENT_CONN] : ${param}`)
-    );
+    // handler.setNotificationHandler("connected", (param) =>
+    //   log(`[CLIENT_CONN] : ${param}`)
+    // );
 
     // IP assignment
     handler.setNotificationHandler("IpAssigned", (param) =>
@@ -74,7 +74,7 @@ export default function NativeInteractiveTest() {
           type,
           (src, srcPort, dst, dstPort, type, payload) => {
             const payloadText = new TextDecoder().decode(payload);
-            log(`[UDP_MSG] From ${src}:${srcPort} → ${dst}:${dstPort} | ${payloadText}`);
+            log(`[UDP_MSG] From ${handler.itoip(src)}:${srcPort} → ${dst}:${dstPort} | ${payloadText}`);
           }
         )
       );
@@ -84,7 +84,7 @@ export default function NativeInteractiveTest() {
           type,
           (src, srcPort, dst, dstPort, type, payload) => {
             const payloadText = new TextDecoder().decode(payload);
-            log(`[TCP_MSG] From ${src}:${srcPort} → ${dst}:${dstPort} | ${payloadText}`);
+            log(`[TCP_MSG] From ${handler.itoip(src)}:${srcPort} → ${dst}:${dstPort} | ${payloadText}`);
           }
         )
       );
@@ -108,12 +108,12 @@ export default function NativeInteractiveTest() {
   const sendMessage = ({ type, payload }) => {
     if (!handler) return;
     const srcIP =  0x7F000001;
-    const dstIP = srcIP; // loopback for testing
+    const dstIP = 3232235622; // loopback for testing
     const srcPort = type >= 128 ? 0 : 5000;
     const dstPort = type >= 128 ? 5173 : 5000;
 
     // Using new positional argument format
-    handler.sendMessage(srcIP, srcPort, dstIP, dstPort, type, new TextEncoder().encode(payload));
+    handler.sendMessage( srcPort, dstIP, dstPort, type, new TextEncoder().encode(payload));
 
     log(`[SEND_MSG] Type ${type} | Payload: ${payload}`);
   };
@@ -129,10 +129,10 @@ export default function NativeInteractiveTest() {
       <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 20 }}>
         <button onClick={() => sendEvent("startTCP", "5173")}>Start TCP Server</button>
         <button onClick={() => sendEvent("getIp", "private")}>Get Local IPs</button>
-        <button onClick={() => sendEvent("createConn", "1-2130706433-5000-2130706433-5000")}>Create Connection UDP</button>
-        <button onClick={() => sendEvent("removeConn", "1-2130706433-5000-2130706433-5000")}>Remove Connection UDP</button>
-        <button onClick={() => sendEvent("createConn", "172-2130706433-0-2130706433-5173")}>Create Connection TCP</button>
-        <button onClick={() => sendEvent("removeConn", "172-2130706433-0-2130706433-5173")}>Remove Connection TCP</button>
+        <button onClick={() => sendEvent("createConn", "1-0-5000-3232235622-5000")}>Create Connection UDP</button>
+        <button onClick={() => sendEvent("removeConn", "1-0-5000-3232235622-5000")}>Remove Connection UDP</button>
+        <button onClick={() => sendEvent("createConn", "172-0-0-3232235622-5173")}>Create Connection TCP</button>
+        <button onClick={() => sendEvent("removeConn", "172-0-0-3232235622-5173")}>Remove Connection TCP</button>
 
         <button onClick={() => sendEvent("mouseMove", "100,100")}>Mouse Move</button>
         <button onClick={() => sendEvent("mouseLeft", "click")}>Mouse Left Click</button>

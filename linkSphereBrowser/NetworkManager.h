@@ -100,14 +100,17 @@ public:
 
     bool removeConnection(uint8_t type, uint32_t srcIP, uint16_t srcPort, uint32_t dstIP, uint16_t dstPort) {
         ConnKey key = makeKey(type, srcIP, srcPort, dstIP, dstPort);
+        ConnectionContext* ctx;
         //std::cout << "this function is called" << std::endl;
-        std::lock_guard<std::mutex> lock(mapMutex);
-        //std::cout << "lock is acquired" << std::endl;
-        auto it = connectionMap.find(key);
-        if (it == connectionMap.end()) return false;
-        connectionMap.erase(it);
+        {
+            std::lock_guard<std::mutex> lock(mapMutex);
+            auto it = connectionMap.find(key);
+            if (it == connectionMap.end()) return false;
+            ctx = it->second;
+            connectionMap.erase(it);
+        }
         //std::cout << "we erase it from map first " << std::endl;
-        if (it->second) stopConnection(it->second);
+        if (ctx) stopConnection(ctx);
         
         //std::cout << "this function ended after deletion" << std::endl;
         return true;
@@ -195,36 +198,45 @@ private:
                 continue;
             }
 
-            sockaddr_in clientAddr{};
-            int len = sizeof(clientAddr);
-            getpeername(clientSock, (sockaddr*)&clientAddr, &len);
+            sockaddr_in peer{}, local{};
+            int peerLen = sizeof(peer);
+            int localLen = sizeof(local);
 
-            char ipStr[INET_ADDRSTRLEN];
-            inet_ntop(AF_INET, &clientAddr.sin_addr, ipStr, sizeof(ipStr));
-            uint16_t clientPort = ntohs(clientAddr.sin_port);
-            uint32_t srcIP, dstIP;
-            inet_pton(AF_INET, "127.0.0.1", (struct in_addr*)&srcIP);
-            inet_pton(AF_INET, ipStr, (struct in_addr*)&dstIP);
+            if (getpeername(clientSock, (sockaddr*)&peer, &peerLen) != 0 ||
+                getsockname(clientSock, (sockaddr*)&local, &localLen) != 0) {
+                int errCode = WSAGetLastError();
+                if (onError)
+                    onError(("TCP endpoint discovery failed. OS Error: " + getOSErrorString(errCode)).c_str());
+                closesocket(clientSock);
+                continue;
+            }
+
+            uint32_t destIP = ntohl(peer.sin_addr.s_addr);    // network byte order
+            uint16_t destPort = ntohs(peer.sin_port);    // host order
+
+            uint32_t srcIP = ntohl(local.sin_addr.s_addr);   // network byte order
+            uint16_t srcPort = ntohs(local.sin_port);   // host order
+
 
             ConnectionContext* ctx = new ConnectionContext();
             ctx->sock = clientSock;
             ctx->isTCP = true;
             ctx->isClient = false;
-            ctx->destIP = ipStr;
-            ctx->destPort = clientPort;
-            ctx->srcIP = "127.0.0.1";
+            ctx->destIP = destIP;
+            ctx->destPort = destPort;
+            ctx->srcIP = srcIP;
             ctx->srcPort = listeningPort;
 
-            ConnKey k = makeKey((1<<7), srcIP, listeningPort, dstIP, clientPort);;
+            ConnKey k = makeKey((1<<7), srcIP, listeningPort, destIP, destPort);;
             {
                 std::lock_guard<std::mutex> lock(mapMutex);
                 connectionMap[k] = ctx;
             }
             // Notify about new connection using ThreadPool safely
             if (onClientConnect) {
-                std::wstring ws = std::wstring(ctx->srcIP.begin(), ctx->srcIP.end()) + L":" +
+                std::wstring ws = std::to_wstring(srcIP) + L":" +
                     std::to_wstring(ctx->srcPort) + L"::" +
-                    std::wstring(ctx->destIP.begin(), ctx->destIP.end()) + L":" +
+                    std::to_wstring(destIP) + L":" +
                     std::to_wstring(ctx->destPort);
 
                 // Capture ws by value
@@ -275,7 +287,7 @@ public:
             return nullptr;
         }
 
-        ConnectionContext* ctx = (type & 0x80)? createTCP(srcIPstr, srcPort, dstIPsrc, dstPort) : createUDP(srcIPstr, srcPort, dstIPsrc, dstPort);
+        ConnectionContext* ctx = (type & 0x80)? createTCP( dstIP, dstPort) : createUDP(srcPort);
 
         if (!ctx) {
             if (onError)
@@ -342,7 +354,12 @@ private:
             {
                 std::unique_lock<std::mutex> lock(incomingMutex);
                 incomingCV.wait(lock, [this] { return !incomingQueue.empty() || !dispatcherRunning; });
-                if (!dispatcherRunning) return;
+                if (!dispatcherRunning) {
+                    for (MessageBlock* m : incomingQueue)
+                        delete m;
+                    incomingQueue.clear();
+                    return;
+                }
                 batch.swap(incomingQueue);
             }
 
@@ -358,12 +375,15 @@ private:
 
 public:
     void shutdownAll() {
-        std::lock_guard<std::mutex> lock(mapMutex);
-        for (auto& p : connectionMap) {
-            ConnectionContext* ctx = p.second;
-            if (ctx) stopConnection(ctx);
+        std::vector<ConnectionContext*> toStop;
+        {
+            std::lock_guard<std::mutex> lock(mapMutex);
+            for (auto& p : connectionMap)
+                toStop.push_back(p.second);
+            connectionMap.clear();
         }
-        connectionMap.clear();
+        for (auto* ctx : toStop)
+            stopConnection(ctx);
         stopTCPServer();
     }
 }; 

@@ -13,7 +13,7 @@ export class PresenceManager {
     /* ---------------- PRESENCE STATE ---------------- */
     this.discoveryPort = -1;
     this.organisationName =  null;
-    this.privateIP = this.messageHandler.getAllIPs()[0]?.ip||null;
+    this.privateIP = this.messageHandler.getDefaultIP();
     this.localUsers= new Map();
     this.accUpdates=[];// it will be json nothing else
     this.messageHandler.setOnMessageReceive(MsgType.DISCOVERY,this.onDiscoveryMessage.bind(this));
@@ -26,12 +26,12 @@ export class PresenceManager {
 
   getOrganisation() { return this.organisationName; }
 
-  getIP() { return this.privateIP; }
+  // getIP() { return this.privateIP; }
 
-  setIP = (index) => {
-    const ip = this.messageHandler.getAllIPs()?.[index]?.ip;
-    return ip ? (this.privateIP === ip ? true : (this.privateIP = ip, this.updateMyPresence(), true)) : false;
-  };
+  // setIP = (index) => {
+  //   const ip = this.messageHandler.getAllIPs()?.[index]?.ip;
+  //   return ip ? (this.privateIP === ip ? true : (this.privateIP = ip, this.updateMyPresence(), true)) : false;
+  // };
 
 
   async _initUDPConnection() {
@@ -252,7 +252,6 @@ export class PresenceManager {
 
     targets.forEach(t => {
       this.messageHandler.sendMessage(
-        this.ipToInt(this.privateIP),
         this.discoveryPort,
         this.ipToInt(t),
         this.localUsers.get(t).discoveryPort,

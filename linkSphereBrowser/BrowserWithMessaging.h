@@ -102,6 +102,7 @@ private:
                         Callback<ICoreWebView2ExecuteScriptCompletedHandler>([this](HRESULT, LPCWSTR) -> HRESULT {
                             // Initialize shared memory once script is injected
                             this->setupSharedMemory(true);
+                            //std::cout << "shared memory is called" << std::endl;
                             return S_OK;
                             }).Get()
                          );
@@ -227,7 +228,7 @@ private:
         if (FAILED(webview->QueryInterface(IID_PPV_ARGS(&webview17))) || !webview17) return;
 
         UINT32 size = 10 * 1024 * 1024;
-        if (FAILED(env12->CreateSharedBuffer(size, &sharedBuffer)) || !sharedBuffer) return;
+        if (FAILED(env12->CreateSharedBuffer(size, &sharedBuffer)) || !sharedBuffer) return;//this line auto release previously allocated memory so don't worry about mem leak
         if (FAILED(sharedBuffer->get_Buffer(&sharedPtr)) || !sharedPtr) return;
 
         if (FAILED(webview17->PostSharedBufferToScript(sharedBuffer.get(),

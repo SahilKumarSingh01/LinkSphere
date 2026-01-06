@@ -9,10 +9,38 @@ export default class MessageHandler {
         this.notificationHandlers = new Map();
         this.port = -1;
         this.localIPs = [];
+        this.defaultIP=0;
         const arr = new Uint8Array(window.chrome.webview.sharedBuffer);
         this.channel = new MessageChannel(arr, arr.length, false);
         window.chrome.webview.addEventListener("message", this._onHostSignal.bind(this));
         this.setNotificationHandler("close", () => { this.sendNotification("close-current") });
+        this.setNotificationHandler("connected", p => {
+            console.log("client is connected",p);
+            const [s, d] = p.split("::");
+            if (!s || !d) return;
+            const f = x => {
+                const [i, o] = x.split(":");
+                return { ip: i, port: +o };
+            };
+            const a = f(s), b = f(d);
+            this.pendingTCP ??= new Map();
+            this.pendingTCP.set(p, setTimeout(
+            async () => await this.removeConn((1<<7),a.ip, a.port, b.ip, b.port),
+                3000
+            ));
+        });
+
+    }
+
+    getDefaultIP = () => this.defaultIP;
+
+    
+    clearPendingTCP(p) {
+        if (!this.pendingTCP) return;
+        const t = this.pendingTCP.get(p);
+        if (!t) return;
+        clearTimeout(t);
+        this.pendingTCP.delete(p);
     }
 
     /* ---------------- INIT ---------------- */
@@ -57,25 +85,27 @@ export default class MessageHandler {
         while ((size = await this.channel.sizeofNextMessage()) > 0) {
             const buf = new Uint8Array(size);
             await this.channel.readBuf(buf, size);
+            setTimeout(() => {
+                try {
+                    const block = new MessageBlock(buf);
+                    const handler = this.onMessageReceiveHandler.get(block.getType());
+                    if (!handler) return;
 
-            try {
-                const block = new MessageBlock(buf);
-                const handler = this.onMessageReceiveHandler.get(block.getType());
-                if (!handler) continue;
-
-                handler(block.getSrcIP(),block.getSrcPort(),block.getDstIP(),
-                    block.getDstPort(),block.getType(), block.getPayload());
-            } catch (e) {
-                console.error("[MessageHandler] Invalid message", e);
-            }
+                    handler(block.getSrcIP(),block.getSrcPort(),block.getDstIP(),
+                        block.getDstPort(),block.getType(), block.getPayload());
+                } catch (e) {
+                    console.error("[MessageHandler] Invalid message", e);
+                }
+            }, 0);
+           
         }
     }
 
     // sendMessage: Sends a message block to native
-    // Input: src, srcPort, dst, dstPort, type, payload (string or Uint8Array)
+    // Input:  srcPort, dst, dstPort, type, payload (string or Uint8Array)
     // Output: boolean (true if sent, false if buffer full)
-    // Example: sendMessage(3232235521, 5173, 3232235522, 6000, 1, "Hello")
-    async sendMessage(src, srcPort, dst, dstPort, type, payload) {
+    // Example: sendMessage( 5173, 3232235522, 6000, 1, "Hello")
+    async sendMessage( srcPort, dst, dstPort, type, payload) {
         if (!this.channel) return false;
 
         const payloadBytes = payload instanceof Uint8Array ? payload : new TextEncoder().encode(payload);
@@ -83,7 +113,7 @@ export default class MessageHandler {
 
         const msg = new MessageBlock(totalSize);
         msg.setType(type);
-        msg.setSrc(src, srcPort);
+        msg.setSrc(0, srcPort);//selection of src doesn't matter anymore
         msg.setDst(dst, dstPort);
         msg.setPayload(payloadBytes);
 
@@ -115,13 +145,16 @@ export default class MessageHandler {
             if (msg === "done") {
                 this.removeNotificationHandler("IpAssigned", handler);
                 resolve(this.localIPs);
+                console.log(this.localIPs);
                 return;
             }
 
-            const [ip, iface] = msg.split("|");
+            const [ip, iface,type] = msg.split("|");
+            if (type === "default")this.defaultIP = ip;
+
             if (!ip || this.localIPs.some(e => e.ip === ip)) return;
 
-            this.localIPs.push({ ip, interface: iface || null });
+            this.localIPs.push({ ip, interface: iface || null ,type});
             };
 
             this.setNotificationHandler("IpAssigned", handler);

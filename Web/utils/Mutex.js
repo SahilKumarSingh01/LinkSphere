@@ -5,7 +5,6 @@ export class Mutex {
   }
 
   lock() {
-    console.log("lock acquired");
     return new Promise(resolve => {
       if (!this.locked) {
         this.locked = true;
@@ -17,7 +16,6 @@ export class Mutex {
   }
 
   unlock() {
-    console.log("lock release");
     if (this.waiters.length > 0) {
       const next = this.waiters.shift();
       next();

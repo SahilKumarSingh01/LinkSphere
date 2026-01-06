@@ -17,8 +17,8 @@ struct ConnectionContext {
     std::thread senderThread;
     std::thread receiverThread;
 
-    std::string srcIP;
-    std::string destIP;
+    uint32_t srcIP;
+    uint32_t destIP;
     uint16_t srcPort;
     uint16_t destPort;
 
@@ -48,8 +48,7 @@ public:
     // --------------------------------------------------------------
     // TCP CREATE + THREADS
     // --------------------------------------------------------------
-    ConnectionContext* createTCP(const std::string& srcIP, uint16_t srcPort,
-        const std::string& destIP, uint16_t destPort){
+    ConnectionContext* createTCP(const uint32_t destIP, uint16_t destPort){
         SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         if (s == INVALID_SOCKET) {
             if (onError) {
@@ -66,7 +65,8 @@ public:
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
         addr.sin_port = htons(destPort);
-        inet_pton(AF_INET, destIP.c_str(), &addr.sin_addr);
+        addr.sin_addr.s_addr = htonl(destIP);
+        //inet_pton(AF_INET, destIP.c_str(), &addr.sin_addr);
 
         if (connect(s, (sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
             if (onError) {
@@ -77,10 +77,19 @@ public:
             return nullptr;
         }
 
+        sockaddr_in local{};
+        int len = sizeof(local);
+        if (getsockname(s, (sockaddr*)&local, &len) == SOCKET_ERROR) {
+            int err = WSAGetLastError();
+            if (onError) onError(("getsockname failed. OS Error: " + getOSErrorString(err)).c_str());
+            closesocket(s);
+            return nullptr;
+        }
+
         ConnectionContext* ctx = new ConnectionContext();
-        ctx->srcIP = srcIP;
+        ctx->srcIP = ntohl(local.sin_addr.s_addr);          // it is zero as set because udp don't require interfaces
+        ctx->srcPort = 0;// ntohs(local.sin_port); just abstraction for sender
         ctx->destIP = destIP;
-        ctx->srcPort = srcPort;
         ctx->destPort = destPort;
         ctx->sock = s;
         ctx->isTCP = true;
@@ -97,8 +106,7 @@ public:
     // --------------------------------------------------------------
     // UDP CREATE + THREADS
     // --------------------------------------------------------------
-    ConnectionContext* createUDP(const std::string& srcIP, uint16_t srcPort,
-        const std::string& destIP, uint16_t destPort)
+    ConnectionContext* createUDP(uint16_t srcPort)
     {
         SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
         if (s == INVALID_SOCKET) {
@@ -108,6 +116,9 @@ public:
             }
             return nullptr;
         }
+        // Always allow reuse
+        int opt = 1;
+        setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(opt));
 
         sockaddr_in srcAddr{};
         srcAddr.sin_family = AF_INET;
@@ -123,11 +134,18 @@ public:
             return nullptr;
         }
 
+        sockaddr_in local{};
+        int len = sizeof(local);
+        if (getsockname(s, (sockaddr*)&local, &len) == SOCKET_ERROR) {
+            int err = WSAGetLastError();
+            if (onError) onError(("getsockname failed. OS Error: " + getOSErrorString(err)).c_str());
+            closesocket(s);
+            return nullptr;
+        }
         ConnectionContext* ctx = new ConnectionContext();
-        ctx->srcIP = srcIP;
-        ctx->destIP = destIP;
+        ctx->srcIP = ntohl(local.sin_addr.s_addr);
+        //std::cout << "here is your src ip" << ctx->srcIP << std::endl;
         ctx->srcPort = srcPort;
-        ctx->destPort = destPort;
         ctx->sock = s;
         ctx->isTCP = false;
         ctx->running = true;
@@ -142,8 +160,8 @@ public:
 protected:
     std::string getCtxString(ConnectionContext* ctx) {
         if (!ctx) return "Invalid Context";
-        return "Src: " + ctx->srcIP + ":" + std::to_string(ctx->srcPort) +
-            " Dest: " + ctx->destIP + ":" + std::to_string(ctx->destPort);
+        return "Src: " + std::to_string(ctx->srcIP) + ":" + std::to_string(ctx->srcPort) +
+            " Dest: " + std::to_string(ctx->destIP) + ":" + std::to_string(ctx->destPort);
     }
 
     std::string getOSErrorString(int code) {
@@ -178,8 +196,8 @@ protected:
             }
 
             if (msg) {
-                const char* ptr = reinterpret_cast<const char*>(msg->getRawData());
-                int toSend = (int)msg->getTotalSize();
+                const char* ptr = reinterpret_cast<const char*>(msg->getNetMsg());
+                int toSend = (int)msg->getNetMsgSize();
                 while (toSend > 0 && ctx->running) {
                     int s = send(ctx->sock, ptr, toSend, 0);
                     if (s == SOCKET_ERROR) {
@@ -214,35 +232,42 @@ protected:
                     return;
                 }
                 if (r == 0) {
+                    //std::cout << "this happend" << getCtxString(ctx) << std::endl;
                     shutdown(ctx->sock, SD_BOTH);   //for other side to know i am done too
+                    ctx->running = false;
                     return;
                 }
                 received += r;
             }
 
             uint32_t totalSize = (sizeBuffer[0] << 24) | (sizeBuffer[1] << 16) | (sizeBuffer[2] << 8) | sizeBuffer[3];
-            if (totalSize < 17) continue;
+            if (totalSize <17) continue;
 
-            std::unique_ptr<uint8_t[]> fullBuffer(new uint8_t[totalSize]);
-            std::memcpy(fullBuffer.get(), sizeBuffer, 4);
-
+            MessageBlock* mb = new MessageBlock(totalSize);
+            mb->setDstPort(ctx->srcPort);                                       //this is the abstraction so sender need not to know which port they used to send but still receiver know where are they receiving
+            mb->setSrcPort(ctx->destPort);
+            mb->setSrcIP(ctx->destIP);
+            mb->setDstIP(ctx->srcIP);
+            uint32_t netMsgSize = mb->getNetMsgSize();
+            uint8_t* ptr = mb->getNetMsgWritePtr();
             received = 4;
-            while (received < totalSize && ctx->running) {
-                int r = recv(ctx->sock, (char*)fullBuffer.get() + received, totalSize - received, 0);
+            while (received < netMsgSize && ctx->running) {
+                int r = recv(ctx->sock, (char*)ptr + received, netMsgSize - received, 0);
                 if (r < 0) {
                     int errCode = WSAGetLastError();
                     if (onError) onError((getCtxString(ctx) + " TCP recv body failed "+ getOSErrorString(errCode)).c_str());
                     ctx->running = false;
+                    delete mb;
                     return;
                 }
                 if (r == 0) {
                     shutdown(ctx->sock, SD_BOTH);   //for other side to know i am done too
+                    delete mb;
                     return;
                 }
                 received += r;
             }
 
-            MessageBlock* mb = new MessageBlock(fullBuffer.get(), totalSize);
             {
                 std::lock_guard<std::mutex> lock(incomingMutex);
                 incomingQueue.push_back(mb);
@@ -271,13 +296,13 @@ protected:
             }
 
             if (msg) {
-                const char* ptr = reinterpret_cast<const char*>(msg->getRawData());
+                const char* ptr = reinterpret_cast<const char*>(msg->getNetMsg());
                 sockaddr_in addr{};
                 addr.sin_family = AF_INET;
                 addr.sin_port = htons(msg->getDstPort());
                 addr.sin_addr.s_addr = htonl(msg->getDstIP()); // already uint32_t in network byte order
 
-                int toSend = (int)msg->getTotalSize();
+                int toSend = (int)msg->getNetMsgSize();
                 while (toSend > 0 && ctx->running) {
                     int s = sendto(ctx->sock, ptr, toSend, 0, (sockaddr*)&addr, sizeof(addr));
                     if (s == SOCKET_ERROR) {
@@ -301,23 +326,30 @@ protected:
         uint8_t* buffer = new uint8_t[bufferSize];
     
         sockaddr_storage from{};
-        int fromLen = sizeof(from);
-        // Always allow reuse
-        int opt = 1;
-        setsockopt(ctx->sock, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(opt));
 
         while (ctx->running) {
+            int fromLen = sizeof(from);
             int r = recvfrom(ctx->sock, (char*)buffer, bufferSize, 0, (sockaddr*)&from, &fromLen);
             if (r == 0 && isLoopback(from)) {
                 ctx->running = false;
                 continue;
             }
             if (r < 0) {
-                //std::cout << "this happen" << std::endl;
                 continue;
             }
 
-            MessageBlock* mb = new MessageBlock(buffer, r);
+            MessageBlock* mb = new MessageBlock();
+            mb->setNetMsg((uint8_t*)buffer, r);
+
+            if (from.ss_family == AF_INET) {
+                sockaddr_in* a = (sockaddr_in*)&from;
+
+                mb->setSrcIP(ntohl(a->sin_addr.s_addr));      // network order
+                mb->setSrcPort(ntohs(a->sin_port));    // host order
+
+                mb->setDstIP(ctx->srcIP);
+                mb->setDstPort(ctx->srcPort);
+            }
             {
                 std::lock_guard<std::mutex> lock(incomingMutex);
                 incomingQueue.push_back(mb);

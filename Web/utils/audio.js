@@ -2,7 +2,7 @@
 import { RingBuffer } from './RingBuffer.js';
 
 export class Microphone {
-  constructor(stream, bufferSize = 8192) {
+  constructor(stream, bufferSize = 48000) {
     if (!stream) throw new Error("Microphone requires a MediaStream.");
 
     this.stream = stream;
@@ -38,7 +38,7 @@ export class Microphone {
 }
 
 export class Speaker {
-  constructor(bufferSize = 8192) {
+  constructor(bufferSize = 48000) {
     this.ringBuffer = new RingBuffer(bufferSize);
     this.audioCtx = new (window.AudioContext)({ sampleRate: 8000 });
     this.processor = this.audioCtx.createScriptProcessor(512, 1, 1);
