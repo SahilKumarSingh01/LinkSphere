@@ -23,7 +23,7 @@ public:
         int height = 700,
         int resourceId = 0
     ) : BrowserWindow(url, title, width, height, resourceId) {
-        threadPool = new ThreadPool(4);
+        threadPool = new ThreadPool(7);//we allow only 5 connections and two for ui
     }
 
     ~BrowserWithMessaging() {

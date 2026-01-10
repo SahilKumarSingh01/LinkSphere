@@ -50,20 +50,6 @@ void onBrowserMessage(const BYTE* d, uint32_t s) {
 
     bool success = g_net->sendMessage(d, s);
     std::cout << "message received from browser\n";
-
-    if (!success && g_browser) {
-        MessageBlock msg(d, s);
-        std::string failMsg =
-            std::to_string(msg.getType())+"::"+
-            std::to_string(msg.getSrcIP()) + ":" +
-            std::to_string(msg.getSrcPort()) + "::" +
-            std::to_string(msg.getDstIP()) + ":" +
-            std::to_string(msg.getDstPort()) + "-send-failed";
-
-        g_browser->notify(
-            std::wstring(failMsg.begin(), failMsg.end()).c_str()
-        );
-    }
 }
 
 void onNetworkMessage(const uint8_t* d, uint32_t s) {
@@ -73,7 +59,7 @@ void onNetworkMessage(const uint8_t* d, uint32_t s) {
     std::cout << "message send to browser\n";
 }
 
-void handleError(const char* t) {
+void notifyNetworkEvent(const char* t) {
     if (!g_browser) return;
 
     int sz = MultiByteToWideChar(CP_UTF8, 0, t, -1, nullptr, 0);
@@ -81,12 +67,13 @@ void handleError(const char* t) {
     MultiByteToWideChar(CP_UTF8, 0, t, -1, &w[0], sz);
     if (!w.empty() && w.back() == L'\0') w.pop_back();
 
-    g_browser->notify((L"Error-" + w).c_str());
+    g_browser->notify( w.c_str());
+    std::cout << "to browser " << t << endl;
 }
 
-void onClientConnect(const wstring & t) {
-    g_browser->notify((L"connected-"+t).c_str());
-}
+//void onClientConnect(const wstring & t) {
+//    g_browser->notify((L"connected-"+t).c_str());
+//}
 
 
 int main() {
@@ -98,8 +85,7 @@ int main() {
 
     NetworkManager net;
     g_net = &net;
-    net.setClientConnectCallback(onClientConnect);
-    net.setErrorCallback(handleError);
+    net.setNetworkNotifyCallback(notifyNetworkEvent);
     net.setMessageCallback(onNetworkMessage);
     browser.setOnReceiveCallback(onBrowserMessage);
     browser.setOnNotificationCallback(onNotification);
@@ -122,7 +108,7 @@ int main() {
 
     setEventHandler(L"mouseLeft", [](const std::wstring&) { leftClick(); });
     setEventHandler(L"mouseRight", [](const std::wstring&) { rightClick(); });
-    setEventHandler(L"mouseScroll", [](const std::wstring& p) { scrollMouse(std::stoi(p)); });
+    setEventHandler(L"mouseScroll", [](const std::wstring& p) {scrollMouse(std::stoi(p)); });
     setEventHandler(L"keyDown", [](const std::wstring& p) { keyDown((WORD)std::stoi(p)); });
     setEventHandler(L"keyUp", [](const std::wstring& p) { keyUp((WORD)std::stoi(p)); });
     setEventHandler(L"keyPress", [](const std::wstring& p) { keyPress((WORD)std::stoi(p)); });
@@ -131,11 +117,7 @@ int main() {
         if (!g_net || !g_browser) return;
         uint8_t t = 0; uint16_t sp = 0, dp = 0; uint32_t sip = 0, dip = 0;
         swscanf_s(p.c_str(), L"%hhu-%u-%hu-%u-%hu", &t, &sip, &sp, &dip, &dp);
-        g_browser->notify(
-            (std::to_wstring(t) + L"::" + std::to_wstring(sip) + L":" + std::to_wstring(sp) + L"::" +
-                std::to_wstring(dip) + L":" + std::to_wstring(dp) +
-                (g_net->removeConnection(t, sip, sp, dip, dp) ? L"-removeConn-success" : L"-removeConn-failed")).c_str()
-        );
+        g_net->removeConnection(t, sip, sp, dip, dp);
         //cout << "we come out of function " << endl;
         });
 
@@ -144,11 +126,6 @@ int main() {
         uint8_t t = 0; uint16_t sp = 0, dp = 0; uint32_t sip = 0, dip = 0;
         swscanf_s(p.c_str(), L"%hhu-%u-%hu-%u-%hu", &t, &sip, &sp, &dip, &dp);
         ConnectionContext* ctx = g_net->createConnection(t, sip, sp, dip, dp);
-        g_browser->notify(
-            (std::to_wstring(t) + L"::" + std::to_wstring(sip) + L":" + std::to_wstring(sp) + L"::" +
-                std::to_wstring(dip) + L":" + std::to_wstring(dp) +
-                (ctx ? L"-create-success" : L"-create-failed")).c_str()
-        );
         });
 
     setEventHandler(L"close", [](const std::wstring&) { if (g_browser) g_browser->close(); });

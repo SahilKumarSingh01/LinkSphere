@@ -42,8 +42,7 @@ private:
     std::thread tcpServerThread;
     std::atomic<bool> serverRunning{ false };
     uint16_t listeningPort{ 0 };
-    ThreadPool *threadPool;
-    void (*onClientConnect)(const std::wstring& info) = nullptr;
+    ThreadPool* threadPool;
 private:
     ConnKey makeKey(uint8_t t, uint32_t /*srcIP*/, uint16_t sp,
         uint32_t dstIP, uint16_t dp)
@@ -71,10 +70,10 @@ public:
     NetworkManager(void (*mcb)(const uint8_t* data, uint32_t size)=nullptr, void (*ecb)(const char* text)=nullptr){
         threadPool = new ThreadPool(4);
         onMessageReceive=mcb;
-        onError=ecb;
+        notifyNetworkEvent=ecb;
         WSADATA wsa;
         if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
-            if (onError) onError("WSAStartup failed");
+            if (notifyNetworkEvent) notifyNetworkEvent("error-WSAStartup failed");
         }
 
         dispatcherThread = std::thread([this]() { dispatcherLoop(); });
@@ -100,24 +99,42 @@ public:
 
     bool removeConnection(uint8_t type, uint32_t srcIP, uint16_t srcPort, uint32_t dstIP, uint16_t dstPort) {
         ConnKey key = makeKey(type, srcIP, srcPort, dstIP, dstPort);
-        ConnectionContext* ctx;
-        //std::cout << "this function is called" << std::endl;
+        ConnectionContext* ctx = nullptr;
+
         {
             std::lock_guard<std::mutex> lock(mapMutex);
             auto it = connectionMap.find(key);
-            if (it == connectionMap.end()) return false;
-            ctx = it->second;
-            connectionMap.erase(it);
+            if (it != connectionMap.end()) {
+                ctx = it->second;
+                connectionMap.erase(it);
+            }
         }
-        //std::cout << "we erase it from map first " << std::endl;
-        if (ctx) stopConnection(ctx);
-        
-        //std::cout << "this function ended after deletion" << std::endl;
+
+        if (!ctx) {
+            // Notify failure if nothing was found
+            if (notifyNetworkEvent) {
+                std::string proto = (type & 0x80) ? "tcp" : "udp";
+                notifyNetworkEvent((proto + "::" + std::to_string(srcPort) + "::" +
+                    std::to_string(dstIP) + ":" + std::to_string(dstPort) +
+                    "-removeConn-failed").c_str());
+            }
+            return false;
+        }
+
+        // Stop the connection
+        stopConnection(ctx);
+
+        // Notify success
+        if (notifyNetworkEvent) {
+            std::string proto = ctx->isTCP ? "tcp" : "udp";
+            notifyNetworkEvent((proto + "::" + std::to_string(ctx->srcPort) + "::" +
+                std::to_string(ctx->destIP) + ":" + std::to_string(ctx->destPort) +
+                "-removeConn-success").c_str());
+        }
+
         return true;
     }
-    void setClientConnectCallback(void (*cb)(const std::wstring& info)) {
-        onClientConnect = cb;
-    }
+
 
     bool removeConnection(uint8_t type, const std::string& srcIp, uint16_t srcPort, const std::string& dstIp, uint16_t dstPort) {
         uint32_t srcIP{}, dstIP{};
@@ -140,7 +157,7 @@ public:
 
         tcpServerSock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         if (tcpServerSock == INVALID_SOCKET) {
-            if (onError) onError("TCP Server: Failed to create socket");
+            if (notifyNetworkEvent) notifyNetworkEvent("error-TCP Server: Failed to create socket");
             return false;
         }
         // Disable Nagle
@@ -157,12 +174,12 @@ public:
 
         if (bind(tcpServerSock, (sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
             int errCode = WSAGetLastError();
-            if (onError) onError(("TCP Server bind failed. OS Error: " + getOSErrorString(errCode)).c_str());
+            if (notifyNetworkEvent) notifyNetworkEvent(("error-TCP Server bind failed. OS Error: " + getOSErrorString(errCode)).c_str());
             return false;
         }
         if (listen(tcpServerSock, SOMAXCONN) == SOCKET_ERROR) {
             int errCode = WSAGetLastError();
-            if (onError) onError(("TCP Server listen failed. OS Error: " + getOSErrorString(errCode)).c_str());
+            if (notifyNetworkEvent) notifyNetworkEvent(("error-TCP Server listen failed. OS Error: " + getOSErrorString(errCode)).c_str());
             return false;
         }
         listeningPort = port;
@@ -194,7 +211,7 @@ private:
             if (!serverRunning) break;
             if (clientSock == INVALID_SOCKET) {
                 int errCode = WSAGetLastError();
-                if (onError) onError(("TCP accept failed. OS Error: " + getOSErrorString(errCode)).c_str());
+                if (notifyNetworkEvent) notifyNetworkEvent(("error-TCP accept failed. OS Error: " + getOSErrorString(errCode)).c_str());
                 continue;
             }
 
@@ -205,8 +222,8 @@ private:
             if (getpeername(clientSock, (sockaddr*)&peer, &peerLen) != 0 ||
                 getsockname(clientSock, (sockaddr*)&local, &localLen) != 0) {
                 int errCode = WSAGetLastError();
-                if (onError)
-                    onError(("TCP endpoint discovery failed. OS Error: " + getOSErrorString(errCode)).c_str());
+                if (notifyNetworkEvent)
+                    notifyNetworkEvent(("error-TCP endpoint discovery failed. OS Error: " + getOSErrorString(errCode)).c_str());
                 closesocket(clientSock);
                 continue;
             }
@@ -233,15 +250,14 @@ private:
                 connectionMap[k] = ctx;
             }
             // Notify about new connection using ThreadPool safely
-            if (onClientConnect) {
-                std::wstring ws = std::to_wstring(srcIP) + L":" +
-                    std::to_wstring(ctx->srcPort) + L"::" +
-                    std::to_wstring(destIP) + L":" +
-                    std::to_wstring(ctx->destPort);
+            if (notifyNetworkEvent) {
+                std::string s = "connected-" + std::to_string(srcIP) + ":" + std::to_string(ctx->srcPort) +
+                    "::" + std::to_string(destIP) + ":" + std::to_string(ctx->destPort);
+
 
                 // Capture ws by value
-                threadPool->enqueue([cb = onClientConnect, ws]() {
-                    cb(ws);
+                threadPool->enqueue([cb = notifyNetworkEvent, s]() {
+                    cb(s.c_str());
                     });
             }
 
@@ -251,19 +267,8 @@ private:
     }
 
 public:
-    static std::string ipToString(uint32_t ip) {
-        unsigned char bytes[4];
-        bytes[0] = (ip >> 24) & 0xFF;
-        bytes[1] = (ip >> 16) & 0xFF;
-        bytes[2] = (ip >> 8) & 0xFF;
-        bytes[3] = ip & 0xFF;
 
-        char buf[16];
-        snprintf(buf, sizeof(buf), "%u.%u.%u.%u", bytes[0], bytes[1], bytes[2], bytes[3]);
-        return std::string(buf);
-    }
-
-    ConnectionContext* createConnection(uint8_t type,uint32_t srcIP, uint16_t srcPort,uint32_t dstIP, uint16_t dstPort){
+    ConnectionContext* createConnection(uint8_t type,uint32_t srcIP, uint16_t srcPort,uint32_t dstIP, uint16_t dstPort, bool notifyOnExist = true){
 
         ConnKey key = makeKey(type, srcIP, srcPort, dstIP, dstPort);
 
@@ -271,35 +276,43 @@ public:
         {
             std::lock_guard<std::mutex> lock(mapMutex);
             auto it = connectionMap.find(key);
-            if (it != connectionMap.end() && it->second->running)
+            if (it != connectionMap.end() && it->second->running) {
+                if (notifyOnExist && notifyNetworkEvent &&!(it->second->isTCP && it->second->connectEvent)) {
+                    ConnectionContext* ctx = it->second;
+                    notifyNetworkEvent(( std::string(ctx->isTCP ? "tcp" : "udp") + "::" + std::to_string(srcPort) + "::" 
+                        +std::to_string(dstIP) + ":" +std::to_string(dstPort) +"-createConn-success").c_str());
+                }
                 return it->second;
+            }
             else if (it != connectionMap.end()) {
                 stopConnection(it->second);
                 connectionMap.erase(it);
             }
         }
-        const std::string srcIPstr(ipToString(srcIP));
-        const std::string dstIPsrc(ipToString(dstIP));
+
         // -------- slow path: create outside lock --------
         if (type & 0x80 && srcPort != 0) {
-            if (onError)
-                onError(("No active TCP connection for " + srcIPstr + ":" + std::to_string(srcPort) + " -> " + dstIPsrc + ":" + std::to_string(dstPort)).c_str());
+            emitConnectionError("tcp", srcPort, dstIP, dstPort, "createConn-failed");
             return nullptr;
         }
 
         ConnectionContext* ctx = (type & 0x80)? createTCP( dstIP, dstPort) : createUDP(srcPort);
 
-        if (!ctx) {
-            if (onError)
-                onError(("Failed to create connection for " + srcIPstr + ":" + std::to_string(srcPort) + " -> " + dstIPsrc + ":" + std::to_string(dstPort)).c_str());
-            return nullptr;
-        }
-
         // -------- publish under lock --------
         {
             std::lock_guard<std::mutex> lock(mapMutex);
-            connectionMap[key] = ctx;
+            auto it = connectionMap.find(key);
+            if (it != connectionMap.end()) {
+                // There’s already a connection, so discard the new one
+                if (ctx) stopConnection(ctx);  // clean up the new connection we were about to insert
+                ctx = nullptr;                 // make sure we don't accidentally use it
+            }
+            else {
+                // No existing connection, insert the new one
+                connectionMap[key] = ctx;
+            }
         }
+
 
         return ctx;
     }
@@ -326,7 +339,8 @@ public:
         ConnectionContext* ctx = createConnection(
             msg->getType(),
             msg->getSrcIP(), msg->getSrcPort(),
-            msg->getDstIP(), msg->getDstPort()
+            msg->getDstIP(), msg->getDstPort(),
+            false
         );
 
         if (!ctx) {

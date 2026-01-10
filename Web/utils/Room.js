@@ -7,260 +7,215 @@ export const Role = Object.freeze({
   CANDIDATE: "candidate"
 });
 
+export const PeerStatus = Object.freeze({
+  CONNECTED: "connected",
+  CONNECTING: "connecting",
+  DISCONNECTED: "disconnected"
+});
+
 export class Room {
-  constructor({
-    name = "",
-    photo = "",
-    peerIp,
-    peerPort,
-    sampleRate = 48000,
-    intervalMs = 20,
-    messageHandler
-  }) {
-    this.peerIp = peerIp;
-    this.peerPort = peerPort;
-    this._meta = { name, photo };
+  constructor() {
+    this.sampleRate = 0;
+    this.intervalMs = 20;
+    this.samplesPerInterval = 0;
+
+    this.messageHandler = null;
+
+    this.selfIP = null;
+    this.selfPort = null;
+    this.name = "";
+    this.photo = "";
+
 
     this.role = Role.FOLLOWER;
     this.currentMasterIP = null;
     this.currentMasterPort = null;
 
-    this.sampleRate = sampleRate;
-    this.intervalMs = intervalMs;
-    this.samplesPerInterval = Math.floor(sampleRate * intervalMs / 1000);
-
-    this.buffers = new Map(); // Master only: peerIp -> RingBuffer
-    this.peers = new Map();   // All peers: peerIp -> { ip, port }
+    this.peers = new Map(); // ip -> { ip, port, role, status }
+    this.buffers = new Map();
 
     this.lastSeenMaster = 0;
     this.clientTimeout = null;
     this.clientTimeoutMs = 1000;
+
     this.electionTimer = null;
     this.masterTimer = null;
+  }
+
+  async init(messageHandler, role, knownPeers = [], sampleRate = 8000) {
+    this.sampleRate = sampleRate;
+    this.samplesPerInterval = Math.floor(
+      (sampleRate * this.intervalMs) / 1000
+    );
 
     this.messageHandler = messageHandler;
 
-    this._bindControlPlane();
+    this.selfIP = this.messageHandler.getDefaultIP();
+    this.selfPort = this.messageHandler.getTCPPort();
 
-    // Room connect handler
-    this.messageHandler.setOnMessageReceive(
-      MsgType.ROOM_CONNECT,
-      (srcIP, srcPort, dstIP, dstPort, type, payload) => 
-        this._onClientConnect(srcIP, srcPort, dstIP, dstPort, type, payload)
-    );
+    this.role = role;
 
-    // Client order (optional, for backward compatibility)
+    for (const peer of knownPeers) {
+      this.connect(peer);
+      
+    }
+
+    if (this.role === Role.MASTER) {
+      this.currentMasterIP = this.selfIP;
+      this.currentMasterPort = this.selfPort;
+    }
+
     this.messageHandler.setOnMessageReceive(
-      MsgType.CLIENT_ORDER_ASSIGN,
+      MsgType.CONNECT_REQUEST,
       (srcIP, srcPort, dstIP, dstPort, type, payload) =>
-        this._handleClientOrderAssign(srcIP, srcPort, dstIP, dstPort, type, payload)
+        this._onConnectRequest(srcIP, srcPort, dstIP, dstPort, type, payload)
     );
 
-    // Master correction
     this.messageHandler.setOnMessageReceive(
-      MsgType.MASTER_CORRECTION,
+      MsgType.CONNECT_RESPONSE,
       (srcIP, srcPort, dstIP, dstPort, type, payload) =>
-        this._handleMasterCorrection(srcIP, srcPort, dstIP, dstPort, type, payload)
+        this._onConnectResponse(srcIP, srcPort, dstIP, dstPort, type, payload)
     );
 
-    // Mixed audio frames reset client timeout
-    this.messageHandler.setOnMessageReceive(
-      MsgType.MIXED_AUDIO_FRAME,
-      (srcIP, _srcPort, _dstIP, _dstPort, _type, payload) => {
-        this._resetClientTimeout();
-      }
-    );
   }
 
-  /* ---------------- Client Timeout ---------------- */
-  _resetClientTimeout() {
-    if (this.clientTimeout) clearTimeout(this.clientTimeout);
-    this.clientTimeout = setTimeout(() => {
-      console.log("[Room] Client timeout, starting election...");
-      this.startElection();
-    }, this.clientTimeoutMs);
-  }
-  
-  ipToString(ip) {
-      // if ip is already string, return
-      if (typeof ip === "string") return ip;
+  connect(peer) {
+    const existing = this.peers.get(peer.ip);
+    if (existing && existing.status === PeerStatus.CONNECTING) return;
 
-      // if ip is number, convert to IPv4 string
-      return ((ip >>> 24) & 0xFF) + "." +
-              ((ip >>> 16) & 0xFF) + "." +
-              ((ip >>> 8) & 0xFF) + "." +
-              (ip & 0xFF);
+    const timeout = setTimeout(() => {
+      const p = this.peers.get(peer.ip);
+      if (p && p.status === PeerStatus.CONNECTING) {
+        this.peers.delete(peer.ip);
       }
-  /* ---------------- Client Connect ---------------- */
-  _onClientConnect(srcIP, _srcPort, _dstIP, _dstPort, _type, payload) {
-    try {
-      const decoder = new TextDecoder();
-      const data = JSON.parse(decoder.decode(payload));
-      const clientPort = data.tcpPort;
-      if (!clientPort) throw new Error("TCP port missing in ROOM_CONNECT payload");
+    }, 3000);
 
-      // Build key in same order as stored in pendingTCP
-      const key = `${this.ipToString(this._dstIP)}:${this._dstPort}::${this.ipToString(srcIP)}:${_srcPort}`;
-      this.messageHandler.clearPendingTCP(key);
+    this.peers.set(peer.ip, {
+      ip: peer.ip,
+      port: peer.port,
+      role: peer.role ?? Role.FOLLOWER,
+      name: peer.name ?? "",
+      photo: peer.photo ?? "",
+      status: PeerStatus.CONNECTING,
+      timeout
+    });
 
-
-      console.log(`[Room] Client connected: ${srcIP}:${clientPort}`);
-
-      // Maintain peers for all cases
-      this.peers.set(srcIP, { ip: srcIP, port: clientPort });
-
-      // Only Master allocates buffers
-      if (this.role === Role.MASTER && !this.buffers.has(srcIP)) {
-        this.buffers.set(
-          srcIP,
-          { buffer: new RingBuffer(this.samplesPerInterval * 10), memberPort: clientPort }
-        );
-      }
-
-      // Build peer list to send (only Master sends full list)
-      const peersList = [];
-      for (const [peerIP, peer] of this.peers) {
-        peersList.push({ ip: peer.ip, port: peer.port });
-      }
-
-      const encoder = new TextEncoder();
-      const payloadToSend = encoder.encode(JSON.stringify({
-        peers: this.role === Role.MASTER ? peersList : [],
+    const payload = new TextEncoder().encode(
+      JSON.stringify({
+        ip: this.selfIP,
+        port: this.selfPort,
         role: this.role,
-        master: this.currentMasterIP ? { ip: this.currentMasterIP, port: this.currentMasterPort } : null
-      }));
+        name: this.name ?? "",
+        photo: this.photo ?? "",
+        master: this.currentMasterIP
+          ? { ip: this.currentMasterIP, port: this.currentMasterPort }
+          : null
+      })
+    );
 
-      this.messageHandler.sendMessage(
-        this.peerIp,
-        0,
-        srcIP,
-        clientPort,
-        MsgType.CONNECTION_ACCEPTED,
-        payloadToSend
-      );
-
-    } catch (e) {
-      console.error("[Room] Invalid ROOM_CONNECT payload", e);
-    }
+    this.messageHandler.sendMessage(
+      0,
+      peer.ip,
+      peer.port,
+      MsgType.CONNECT_REQUEST,
+      payload
+    );
   }
 
-  /* ---------------- Master Correction ---------------- */
-  _handleMasterCorrection(srcIP, _srcPort, _dstIP, _dstPort, _type, payload) {
-    try {
-      const decoder = new TextDecoder();
-      const data = JSON.parse(decoder.decode(payload));
-      if (data.ip && data.port !== undefined) {
-        this.currentMasterIP = data.ip;
-        this.currentMasterPort = data.port;
+  _onConnectRequest(srcIP, srcPort, _dIP, _dPort, _type, payload) {
+    const data = JSON.parse(new TextDecoder().decode(payload));
+    
+    const peer = {
+      ip: srcIP,
+      port: data.port,          // incoming port from peer (not necessarily same as srcPort)
+      role: data.role ?? Role.FOLLOWER,
+      name: data.name ?? "",
+      photo: data.photo ?? "",
+      status: PeerStatus.CONNECTED,
+      timeout: null
+    };
 
-        this.role = (this.peerIp === this.currentMasterIP && this.peerPort === this.currentMasterPort)
-          ? Role.MASTER
-          : Role.FOLLOWER;
+    if (data.role===Role.MASTER) {
+      this.currentMasterIP = srcIP;
+      this.currentMasterPort = data.port; // only set master if peer says it is master
+    }
 
-        this.lastSeenMaster = Date.now();
-        console.log(`[Room] Master corrected: ${this.currentMasterIP}:${this.currentMasterPort}, role: ${this.role}`);
+    this.peers.set(srcIP, peer);
+
+    const responsePayload = new TextEncoder().encode(
+      JSON.stringify({
+        ip: this.selfIP,
+        port: this.selfPort,
+        role: this.role,
+        name: this.name ?? "",
+        photo: this.photo ?? "",
+        master: this.currentMasterIP
+          ? { ip: this.currentMasterIP, port: this.currentMasterPort }
+          : null
+      })
+    );
+
+    this.messageHandler.sendMessage(
+      0,        // ephemeral port, let handler pick random
+      srcIP,
+      data.port,
+      MsgType.CONNECT_RESPONSE,
+      responsePayload
+    );
+
+    if (data.master) {
+      this.updateMaster(data.master.ip, data.master.port); // only trust master's own info
+    }
+    this.messageHandler.clearPendingTCP(srcIP,srcPort,_dIP,_dPort);
+  }
+
+  _onConnectResponse(srcIP, srcPort, _dIP, _dPort, _type, payload) {
+    const data = JSON.parse(new TextDecoder().decode(payload));
+    const peer = this.peers.get(srcIP);
+    if (!peer) return;
+
+    if (peer.timeout) clearTimeout(peer.timeout); // clears timeout for connecting peer
+
+    peer.port = srcPort;    // use the actual TCP port used for response
+    peer.role = data.role ?? null;
+    peer.name = data.name ?? "";
+    peer.photo = data.photo ?? "";
+    peer.status = PeerStatus.CONNECTED;
+    peer.timeout = null;
+
+    if (data.master) {
+      this.updateMaster(data.master.ip, data.master.port);
+    }
+    this.messageHandler.clearPendingTCP(srcIP,srcPort,_dIP,_dPort);
+  }
+
+  updateMaster(ip, port) {
+    // if same as current master, nothing to do
+    if (this.currentMasterIP === ip && this.currentMasterPort === port) return;
+
+    // reset master info
+    this.currentMasterIP = null;
+    this.currentMasterPort = null;
+
+    // if peer already exists, remove if connected, skip if connecting
+    if (this.peers.has(ip)) {
+      const peer = this.peers.get(ip);
+      if (peer.status === PeerStatus.CONNECTING) return; // still waiting for handshake
+      if (peer.status === PeerStatus.CONNECTED) {
+        if (peer.timeout) clearTimeout(peer.timeout); // cancel any pending timeout
+        this.peers.delete(ip); // remove old master to re-verify liveness
       }
-    } catch (e) {
-      console.error("[Room] Failed to handle MASTER_CORRECTION", e);
-    }
-  }
-
-
-  /* ---------------- Control Plane ---------------- */
-  _bindControlPlane() {
-    this.messageHandler.setOnMessageReceive(
-      MsgType.HEARTBEAT,
-      (src) => this._onHeartbeat(src)
-    );
-  }
-
-  _onHeartbeat(srcPeer) {
-    if (srcPeer === this.currentMasterIP) {
-      this.lastSeenMaster = Date.now();
-    }
-  }
-
-  /* ---------------- Liveness ---------------- */
-  checkMasterTimeout(timeout = 500) {
-    if (!this.currentMasterIP) return true;
-    return Date.now() - this.lastSeenMaster > timeout;
-  }
-
-  /* ---------------- Election ---------------- */
-  startElection() {
-    if (this.role !== Role.FOLLOWER) return;
-
-    this.role = Role.CANDIDATE;
-    this._stopElection();
-
-    const delay = (this.myOrder || 0) * 50; // deterministic delay
-
-    this.electionTimer = setTimeout(() => {
-      this._becomeMaster();
-    }, delay);
-  }
-
-  _stopElection() {
-    if (this.electionTimer) {
-      clearTimeout(this.electionTimer);
-      this.electionTimer = null;
-    }
-  }
-
-  _becomeMaster() {
-    this.role = Role.MASTER;
-    this.currentMasterIP = this.peerIp;
-    this.currentMasterPort = this.peerPort;
-    this.lastSeenMaster = Date.now();
-
-    // Broadcast master info (ip + port)
-    this.messageHandler.broadcast(
-      MsgType.MASTER_ANNOUNCE,
-      { ip: this.currentMasterIP, port: this.currentMasterPort }
-    );
-
-    this._startMaster();
-  }
-
-  /* ---------------- Master Audio ---------------- */
-  _startMaster() {
-    this.messageHandler.setOnMessageReceive(
-      MsgType.AUDIO_FRAME,
-      (src, _, __, ___, payload) => {
-        if (!this.buffers.has(src)) {
-          this.buffers.set(
-            src,
-            new RingBuffer(this.samplesPerInterval * 10)
-          );
-        }
-        this.buffers.get(src).buffer.writeSamples(new Float32Array(payload));
-      }
-    );
-
-    this.masterTimer = setInterval(() => this._runMaster(), this.intervalMs);
-  }
-
-  _stopMaster() {
-    if (this.masterTimer) {
-      clearInterval(this.masterTimer);
-      this.masterTimer = null;
-    }
-    this.buffers.clear();
-  }
-
-  _runMaster() {
-    if (this.buffers.size === 0) return;
-
-    const mixed = new Float32Array(this.samplesPerInterval);
-    for (const buf of this.buffers.values()) {
-      const frame = new Float32Array(this.samplesPerInterval);
-      buf.buffer.readSamples(frame);
-      for (let i = 0; i < mixed.length; i++) mixed[i] += frame[i];
     }
 
-    this.messageHandler.broadcast(
-      MsgType.MIXED_AUDIO_FRAME,
-      mixed.buffer
-    );
+    // attempt a fresh connect to confirm liveness
+    this.connect({
+      ip,
+      port,
+      role: Role.MASTER
+    });
   }
+
+
+
+
 }

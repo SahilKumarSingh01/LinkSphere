@@ -4,9 +4,10 @@ import { MessageBlock } from "./MessageBlock.js";
 export default class MessageHandler {
     constructor() {
         this.channel = null;
-        this.onMessageReceiveHandler = new Map();
+        this.notificationHandlers = new Map(); // string -> Set<function>
+        this.onMessageReceiveHandler = new Map(); // number -> Set<function>
         this.onNotification = null;
-        this.notificationHandlers = new Map();
+        
         this.port = -1;
         this.localIPs = [];
         this.defaultIP=0;
@@ -35,13 +36,17 @@ export default class MessageHandler {
     getDefaultIP = () => this.defaultIP;
 
     
-    clearPendingTCP(p) {
+    clearPendingTCP(srcIP, srcPort, destIP, destPort) {
         if (!this.pendingTCP) return;
-        const t = this.pendingTCP.get(p);
+
+        const key = `${destIP}:${destPort}::${srcIP}:${srcPort}`;
+        const t = this.pendingTCP.get(key);
         if (!t) return;
+
         clearTimeout(t);
-        this.pendingTCP.delete(p);
+        this.pendingTCP.delete(key);
     }
+
 
     /* ---------------- INIT ---------------- */
 
@@ -70,36 +75,53 @@ export default class MessageHandler {
     async _onHostSignal(event) {
         const msg = String(event.data);
 
-        // Handle notifications first
+        /* -------- NOTIFICATIONS -------- */
         if (msg !== "dataReady") {
             const sep = msg.indexOf("-");
-            const handler = sep !== -1 ? this.notificationHandlers.get(msg.slice(0, sep)) : null;
-            if (handler) return handler(msg.slice(sep + 1));
-            if (this.onNotification) return this.onNotification(msg);
+            const key = sep !== -1 ? msg.slice(0, sep) : msg;
+            const payload = sep !== -1 ? msg.slice(sep + 1) : "";
+            // console.log("messsage received",msg,payload);
+            const handlers = this.notificationHandlers.get(key);
+            if (handlers) {
+                for (const h of handlers)
+                    setTimeout(() => h(payload), 0); // fully independent
+                return;
+            }
+
+            if (this.onNotification)
+                return setTimeout(() => this.onNotification(msg), 0);
         }
 
         if (!this.channel) return;
 
-        // Process all messages in buffer
+        /* -------- MESSAGES -------- */
         let size;
         while ((size = await this.channel.sizeofNextMessage()) > 0) {
             const buf = new Uint8Array(size);
             await this.channel.readBuf(buf, size);
+
             setTimeout(() => {
                 try {
                     const block = new MessageBlock(buf);
-                    const handler = this.onMessageReceiveHandler.get(block.getType());
-                    if (!handler) return;
+                    const handlers = this.onMessageReceiveHandler.get(block.getType());
+                    if (!handlers) return;
 
-                    handler(block.getSrcIP(),block.getSrcPort(),block.getDstIP(),
-                        block.getDstPort(),block.getType(), block.getPayload());
+                    for (const h of handlers)
+                        setTimeout(() => h(
+                            block.getSrcIP(),
+                            block.getSrcPort(),
+                            block.getDstIP(),
+                            block.getDstPort(),
+                            block.getType(),
+                            block.getPayload()
+                        ), 0); // each handler isolated
                 } catch (e) {
                     console.error("[MessageHandler] Invalid message", e);
                 }
             }, 0);
-           
         }
     }
+
 
     // sendMessage: Sends a message block to native
     // Input:  srcPort, dst, dstPort, type, payload (string or Uint8Array)
@@ -184,17 +206,53 @@ export default class MessageHandler {
     // Example: itoip(3232235521) => [192,168,0,1]
     itoip = n => [n >>> 24, n >>> 16 & 0xff, n >>> 8 & 0xff, n & 0xff];
 
+    /* ---------------- HANDLER REGISTRATION ---------------- */
+
+    // setNotificationHandler: Adds a handler for a notification event
+    // Multiple handlers per event are supported
+    // Input: event (string), handler (function)
+    setNotificationHandler(event, handler) {
+        if (!this.notificationHandlers.has(event))
+            this.notificationHandlers.set(event, new Set());
+        this.notificationHandlers.get(event).add(handler);
+    }
+
+    // setOnMessageReceive: Adds a handler for a message type
+    // Multiple handlers per type are supported
+    // Input: type (number), callback (function)
+    setOnMessageReceive(type, callback) {
+        if (!this.onMessageReceiveHandler.has(type))
+            this.onMessageReceiveHandler.set(type, new Set());
+        this.onMessageReceiveHandler.get(type).add(callback);
+    }
+
+
     /* ---------------- REMOVE HANDLERS ---------------- */
 
-    // removeMessageHandler: Removes handler for a message type
-    // Input: type (number)
-    // Example: removeMessageHandler(1)
-    removeMessageHandler(type) { this.onMessageReceiveHandler.delete(type); }
+    // removeNotificationHandler: Removes a specific handler for a notification
+    // If handler is not provided, does nothing
+    // Input: event (string), handler (function)
+    removeNotificationHandler(event, handler) {
+        const set = this.notificationHandlers.get(event);
+        if (!set) return;
 
-    // removeNotificationHandler: Removes handler for a notification
-    // Input: event (string)
-    // Example: removeNotificationHandler("IpAssigned")
-    removeNotificationHandler(event) { this.notificationHandlers.delete(event); }
+        set.delete(handler);
+        if (set.size === 0)
+            this.notificationHandlers.delete(event);
+    }
+
+    // removeMessageHandler: Removes a specific handler for a message type
+    // If handler is not provided, does nothing
+    // Input: type (number), handler (function)
+    removeMessageHandler(type, handler) {
+        const set = this.onMessageReceiveHandler.get(type);
+        if (!set) return;
+
+        set.delete(handler);
+        if (set.size === 0)
+            this.onMessageReceiveHandler.delete(type);
+    }
+
 
     /* ---------------- TCP CONTROL ---------------- */
 
@@ -232,8 +290,8 @@ export default class MessageHandler {
     /* ---------------- MOUSE & KEYBOARD ---------------- */
 
     mouseMove = (x, y) => this.sendNotification(`mouseMove-${x},${y}`); // Example: mouseMove(100, 200)
-    mouseLeft = () => this.sendNotification("mouseLeft");
-    mouseRight = () => this.sendNotification("mouseRight");
+    mouseLeft = () => this.sendNotification("mouseLeft-click");
+    mouseRight = () => this.sendNotification("mouseRight-click");
     mouseScroll = d => this.sendNotification(`mouseScroll-${d}`); // Example: mouseScroll(5)
     keyDown = k => this.sendNotification(`keyDown-${k}`); // Example: keyDown(65)
     keyUp = k => this.sendNotification(`keyUp-${k}`); // Example: keyUp(65)
@@ -241,74 +299,63 @@ export default class MessageHandler {
 
     /* ---------------- CONNECTION CONTROL ---------------- */
 
-    // createConn: Requests native to create connection
-    // Input: type, srcIP, srcPort, dstIP, dstPort
-    // Output: Promise<number> (1 if success, 0 if fail)
-    // Example: await createConn(1, 3232235521, 5173, 3232235522, 6000)
+    /* ================= CONNECTION-SCOPED NOTIFICATIONS ================= */
+
+    /*
+    Key format (SAME everywhere):
+    proto::srcPort::dstIP:dstPort
+
+    proto = "tcp" | "udp"
+    */
+
+    /* ---------- INTERNAL HELPERS ---------- */
+
+   // Attach handler for a specific connection
+    attachConnHandler(type, sp, dip, dp, handler) {
+        const proto = type & 0x80 ? "tcp" : "udp";
+        const key = proto === "udp" ? `${proto}::${sp}::0:0` : `${proto}::${sp}::${dip}:${dp}`;
+        this.setNotificationHandler(key, handler);
+    }
+
+    // Remove handler for a specific connection
+    detachConnHandler(type, sp, dip, dp, handler) {
+        const proto = type & 0x80 ? "tcp" : "udp";
+        const key = proto === "udp" ? `${proto}::${sp}::0:0` : `${proto}::${sp}::${dip}:${dp}`;
+        this.removeNotificationHandler(key, handler);
+    }
+
+    // Create connection, resolves 1 if success, 0 if fail
     createConn(type, sip, sp, dip, dp) {
-        return new Promise((resolve) => {
-            const key = `${type}::${sip}:${sp}::${dip}:${dp}`;
-
-            const handler = (param) => {
-                this.removeNotificationHandler(key);
-                resolve(param.endsWith("create-success") ? 1 : 0);
+        return new Promise(resolve => {
+            const proto = type & 0x80 ? "tcp" : "udp";
+            const key = proto === "udp" ? `${proto}::${sp}::0:0` : `${proto}::${sp}::${dip}:${dp}`;
+            const handler = msg => {
+                this.removeNotificationHandler(key, handler);
+                resolve(msg.endsWith("createConn-success") ? 1 : 0);
             };
-
             this.setNotificationHandler(key, handler);
-            this.sendNotification(`createConn-${type}-${sip}-${sp}-${dip}-${dp}`);
+            this.sendNotification(`createConn-${type}-${sip}-${sp}-${proto === "udp" ? 0 : dip}-${proto === "udp" ? 0 : dp}`);
         });
     }
 
-    // onSendFailed: Sets/removes callback for a send failure for a connection
-    // Input: type, srcIP, srcPort, dstIP, dstPort, cb (function or null)
-    // Example: onSendFailed(1, 3232235521, 5173, 3232235522, 6000, cb)
-    onSendFailed(type, srcIP, srcPort, dstIP, dstPort, cb) {
-        const key = `${type}::${srcIP}:${srcPort}::${dstIP}:${dstPort}`;
-        if (cb) this.setNotificationHandler(key, cb);
-        else this.removeNotificationHandler(key);
-    }
-
-    // removeConn: Requests native to remove connection
-    // Input: type, srcIP, srcPort, dstIP, dstPort
-    // Output: Promise<number> (1 if success, 0 if fail)
-    // Example: await removeConn(1, 3232235521, 5173, 3232235522, 6000)
+    // Remove connection, resolves 1 if success, 0 if fail
     removeConn(type, sip, sp, dip, dp) {
-        return new Promise((resolve) => {
-            const key = `${type}::${sip}:${sp}::${dip}:${dp}`;
-
-            const handler = (param) => {
-                this.removeNotificationHandler(key);
-                resolve(param.endsWith("removeConn-success") ? 1 : 0);
+        return new Promise(resolve => {
+            const proto = type & 0x80 ? "tcp" : "udp";
+            const key = proto === "udp" ? `${proto}::${sp}::0:0` : `${proto}::${sp}::${dip}:${dp}`;
+            const handler = msg => {
+                this.removeNotificationHandler(key, handler);
+                resolve(msg.endsWith("removeConn-success") ? 1 : 0);
             };
-
             this.setNotificationHandler(key, handler);
-            this.sendNotification(`removeConn-${type}-${sip}-${sp}-${dip}-${dp}`);
+            this.sendNotification(`removeConn-${type}-${sip}-${sp}-${proto === "udp" ? 0 : dip}-${proto === "udp" ? 0 : dp}`);
         });
     }
+
+
 
 
     /* ---------------- HANDLER REGISTRATION ---------------- */
-
-    // setNotificationHandler: Sets handler for a specific notification
-    // Input: event (string), handler (function receiving notification payload as string)
-    // Example: setNotificationHandler("IpAssigned", msg => console.log(msg))
-    // Notification payload examples:
-    // "IpAssigned" => "192.168.0.10|eth0"
-    // "serverStarted" => "5173"
-    // "Error" => "Failed to start server"
-    setNotificationHandler(event, handler) { this.notificationHandlers.set(event, handler); }
-
-    // setOnMessageReceive: Sets handler for a message type
-    // Input: type (number), callback (function receiving positional message arguments)
-    // Example: setOnMessageReceive(1, (src, srcPort, dst, dstPort, type, payload) => console.log(src, dst, payload))
-    // Callback argument format:
-    // src: number (IP as integer)
-    // srcPort: number
-    // dst: number (IP as integer)
-    // dstPort: number
-    // type: number
-    // payload: Uint8Array
-    setOnMessageReceive(type, callback) { this.onMessageReceiveHandler.set(type, callback); }
 
     // setOnNotification: Sets fallback handler for unknown notifications
     // Input: callback (function receiving raw notification string)
@@ -323,7 +370,7 @@ export default class MessageHandler {
     // Input: cb (function receiving error message string) or null
     // Example: onError(msg => console.log(msg))
     // Error messages could be "Failed to start server", "Connection lost", etc.
-    onError(cb) { cb ? this.setNotificationHandler("Error", cb) : this.removeNotificationHandler("Error"); }
+    onError(cb) { cb ? this.setNotificationHandler("error", cb) : this.removeNotificationHandler("error"); }
 
     // onClientConnected: Sets or removes callback for client connection
     // Input: cb (function receiving client info as string) or null
