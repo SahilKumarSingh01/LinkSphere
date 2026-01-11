@@ -50,11 +50,14 @@ export const MsgType = Object.freeze({
   // -------------------
   // NOTE: Any type value greater than 127 is considered TCP.
   //       When extending MsgType, pick numbers > 127 for TCP messages
-  TCP_TEXT:     0x80,
+  TCP:    0x80,
   TCP_JSON:     0x81,
   TCP_BINARY:   0x82,
   TCP_AUDIO_PCM: 0x90,
   TCP_AUDIO_ENC: 0x91,
   TCP_VIDEO_FRAME: 0xA0,
   TCP_VIDEO_ENC: 0xA1,
+  CAST_VOTE: 0xA2,
+  CLINET_AUDIO:0xA3,
+  AUDIO_MIX:0xA4,
 });

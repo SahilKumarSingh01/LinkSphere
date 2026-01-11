@@ -29,12 +29,25 @@ export class RingBuffer {
       this.readIndex = (this.readIndex + 1) % this.size
     }
 
-    return toRead
+    return toRead;
   }
   availableToRead(){
     return (this.writeIndex - this.readIndex + this.size) % this.size;
   }
   availableToWrite(){
     return (this.size-1-this.availableToRead());
+  }
+    // Peek function — like read but does not move readIndex
+  peekSamples(sampleOut, offset = 0, length = sampleOut.length) {
+    const available = (this.writeIndex - this.readIndex + this.size) % this.size
+    const toPeek = Math.min(length, available - offset)
+    if (toPeek <= 0) return 0
+
+    for (let i = 0; i < toPeek; i++) {
+      const idx = (this.readIndex + offset + i) % this.size
+      sampleOut[i] = this.buffer[idx]
+    }
+
+    return toPeek
   }
 }

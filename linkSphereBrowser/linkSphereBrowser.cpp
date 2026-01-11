@@ -78,7 +78,7 @@ void notifyNetworkEvent(const char* t) {
 
 int main() {
     //std::cout<<std::thread::hardware_concurrency() << std::endl;;
-    std::wstring url = L"http://localhost:3000/testing";
+    std::wstring url = L"http://localhost:3000/room";
 
     BrowserWithMessaging browser(url, L"LinkSphere", 1000, 700, IDI_WINDOWSPROJECT1);
     g_browser = &browser;
