@@ -327,7 +327,7 @@ protected:
                     return;
                 }
                 if (r == 0) {
-                    //std::cout << "this happend" << getCtxString(ctx) << std::endl;
+                    notifyNetworkEvent((std::string("tcp::"+to_string(ctx->srcPort) + "::") + std::to_string(ctx->destIP) + ":" + std::to_string(ctx->destPort) + "-socket-close").c_str());
                     shutdown(ctx->sock, SD_BOTH);   //for other side to know i am done too
                     ctx->running = false;
                     return;

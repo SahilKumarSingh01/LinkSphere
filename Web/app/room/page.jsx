@@ -24,13 +24,15 @@ const Home = () => {
     decoderRef.current = new OpusDecoder();
 
     encoderRef.current.onData((packet) => {
+      // console.log("encoder data",packet.length);
       decoderRef.current.writePacket(packet);
     });
 
     decoderRef.current.onData((pcm48) => {
+      // console.log("decoder data",pcm48.length);
      // ringBufferRef.current.writeSamples(pcm48);
      speakerRef.current.writeSamples(pcm48);
-
+     chunkRef.current=pcm48;
       // while (ringBufferRef.current.availableToRead() >= 512) {
       //   ringBufferRef.current.readSamples(out);
       //   chunkRef.current = out;
@@ -38,23 +40,34 @@ const Home = () => {
       // }
     });
 
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    micRef.current = new Microphone(stream);
-    speakerRef.current = new Speaker();
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      micRef.current = new Microphone(stream);
+      speakerRef.current = new Speaker();
 
-    const interval = 1000;
+      const interval = 1000;
 
-    setInterval(() => {
-      const available = micRef.current.availableToRead();
-      if (available > 0) {
-        const buffer = new Float32Array(available);
-        const read = micRef.current.readSamples(buffer);
+      setInterval(() => {
+        try {
+          const available = micRef.current.availableToRead();
+          console.log("available", available);
 
-        if (read > 0) {
-          encoderRef.current.writeSamples(buffer);
+          if (available > 0) {
+            const buffer = new Float32Array(available);
+            const read = micRef.current.readSamples(buffer);
+
+            if (read > 0) {
+              encoderRef.current.writeSamples(buffer);
+            }
+          }
+        } catch (err) {
+          console.error("[AUDIO LOOP ERROR]", err);
         }
-      }
-    }, interval);
+      }, interval);
+    } catch (err) {
+      console.error("[MIC INIT ERROR]", err);
+    }
+
   };
 
   const handleDeviceChange = async () => {

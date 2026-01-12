@@ -5,8 +5,11 @@ export default class MessageHandler {
     constructor() {
         this.channel = null;
         this.notificationHandlers = new Map(); // string -> Set<function>
-        this.onMessageReceiveHandler = new Map(); // number -> Set<function>
+        this.onMessageReceiveHandler = new Map(); // number -> function
         this.onNotification = null;
+        this._err = null;
+        this._conn = null;
+
         
         this.port = -1;
         this.localIPs = [];
@@ -103,18 +106,16 @@ export default class MessageHandler {
             setTimeout(() => {
                 try {
                     const block = new MessageBlock(buf);
-                    const handlers = this.onMessageReceiveHandler.get(block.getType());
-                    if (!handlers) return;
-
-                    for (const h of handlers)
-                        setTimeout(() => h(
-                            block.getSrcIP(),
-                            block.getSrcPort(),
-                            block.getDstIP(),
-                            block.getDstPort(),
-                            block.getType(),
-                            block.getPayload()
-                        ), 0); // each handler isolated
+                    const handler = this.onMessageReceiveHandler.get(block.getType());
+                    if (!handler) return;
+                    setTimeout(() => handler(
+                        block.getSrcIP(),
+                        block.getSrcPort(),
+                        block.getDstIP(),
+                        block.getDstPort(),
+                        block.getType(),
+                        block.getPayload()
+                    ), 0); // each handler isolated
                 } catch (e) {
                     console.error("[MessageHandler] Invalid message", e);
                 }
@@ -221,9 +222,9 @@ export default class MessageHandler {
     // Multiple handlers per type are supported
     // Input: type (number), callback (function)
     setOnMessageReceive(type, callback) {
-        if (!this.onMessageReceiveHandler.has(type))
-            this.onMessageReceiveHandler.set(type, new Set());
-        this.onMessageReceiveHandler.get(type).add(callback);
+        if (!callback)return;
+
+        this.onMessageReceiveHandler.set(type,callback);
     }
 
 
@@ -242,15 +243,9 @@ export default class MessageHandler {
     }
 
     // removeMessageHandler: Removes a specific handler for a message type
-    // If handler is not provided, does nothing
-    // Input: type (number), handler (function)
-    removeMessageHandler(type, handler) {
-        const set = this.onMessageReceiveHandler.get(type);
-        if (!set) return;
-
-        set.delete(handler);
-        if (set.size === 0)
-            this.onMessageReceiveHandler.delete(type);
+    // Input: type (number),
+    removeMessageHandler(type) {
+        this.onMessageReceiveHandler.delete(type);
     }
 
 
@@ -366,16 +361,18 @@ export default class MessageHandler {
 
     /* ---------------- CALLBACKS ---------------- */
 
-    // onError: Sets or removes callback for errors
-    // Input: cb (function receiving error message string) or null
-    // Example: onError(msg => console.log(msg))
-    // Error messages could be "Failed to start server", "Connection lost", etc.
-    onError(cb) { cb ? this.setNotificationHandler("error", cb) : this.removeNotificationHandler("error"); }
+    // Sets or replaces the error callback; removes the old one if present
+    onError(cb) {
+        if (this._err) this.removeNotificationHandler("error", this._err);
+        this._err = cb;
+        if (cb) this.setNotificationHandler("error", cb);
+    }
 
-    // onClientConnected: Sets or removes callback for client connection
-    // Input: cb (function receiving client info as string) or null
-    // Example: onClientConnected(msg => console.log(msg))
-    // msg could be "3232235522:6000" (client IP and port)
-    onClientConnected(cb) { cb ? this.setNotificationHandler("connected", cb) : this.removeNotificationHandler("connected"); }
+    // Sets or replaces the client-connected callback; removes the old one if present
+    onClientConnected(cb) {
+        if (this._conn) this.removeNotificationHandler("connected", this._conn);
+        this._conn = cb;
+        if (cb) this.setNotificationHandler("connected", cb);
+    }
 
 }

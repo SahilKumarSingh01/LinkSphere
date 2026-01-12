@@ -58,6 +58,8 @@ export const MsgType = Object.freeze({
   TCP_VIDEO_FRAME: 0xA0,
   TCP_VIDEO_ENC: 0xA1,
   CAST_VOTE: 0xA2,
-  CLINET_AUDIO:0xA3,
+  CLIENT_AUDIO:0xA3,
   AUDIO_MIX:0xA4,
+  CONNECT_REQUEST:0xA5,
+  CONNECT_REPLY:0xA6,
 });
