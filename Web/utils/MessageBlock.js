@@ -59,7 +59,7 @@ export class MessageBlock {
 
     getType() {
         return this._buffer[16];
-    }
+    }zzz
 
     getPayload() {
         return this._buffer.subarray(17);

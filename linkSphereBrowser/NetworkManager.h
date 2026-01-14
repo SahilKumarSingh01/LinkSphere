@@ -17,9 +17,9 @@
 //#include <iostream>/*
 //using namespace std;*/
 struct ConnKey {
-    uint32_t dstIP;
     uint16_t dstPort;
     uint16_t srcPort;
+    uint32_t dstIP;
     uint8_t  type; // 0 = UDP, 1 = TCP
 
     bool operator<(const ConnKey& o) const {
@@ -271,46 +271,55 @@ public:
     ConnectionContext* createConnection(uint8_t type,uint32_t srcIP, uint16_t srcPort,uint32_t dstIP, uint16_t dstPort, bool notifyOnExist = true){
 
         ConnKey key = makeKey(type, srcIP, srcPort, dstIP, dstPort);
-
+        ConnectionContext* tostop=nullptr;
         // -------- fast path: lookup only --------
         {
             std::lock_guard<std::mutex> lock(mapMutex);
             auto it = connectionMap.find(key);
             if (it != connectionMap.end() && it->second->running) {
-                if (notifyOnExist && notifyNetworkEvent &&!(it->second->isTCP && it->second->connectEvent)) {
-                    ConnectionContext* ctx = it->second;
-                    notifyNetworkEvent(( std::string(ctx->isTCP ? "tcp" : "udp") + "::" + std::to_string(srcPort) + "::" 
-                        +std::to_string(dstIP) + ":" +std::to_string(dstPort) +"-createConn-success").c_str());
+                ConnectionContext* ctx = it->second;
+                if ( notifyOnExist && notifyNetworkEvent && !(ctx->isTCP && ctx->connectEvent)) {
+                    notifyNetworkEvent((std::string(ctx->isTCP ? "tcp" : "udp") + "::" + std::to_string(srcPort) + "::"
+                        + std::to_string(dstIP) + ":" + std::to_string(dstPort) + "-createConn-success").c_str());
                 }
-                return it->second;
+                return ctx;
             }
             else if (it != connectionMap.end()) {
-                stopConnection(it->second);
+                tostop = it->second;
                 connectionMap.erase(it);
             }
         }
 
+        if (tostop) {
+            stopConnection(tostop);
+            tostop = nullptr;
+        }
+
         // -------- slow path: create outside lock --------
         if (type & 0x80 && srcPort != 0) {
-            emitConnectionError("tcp", srcPort, dstIP, dstPort, "createConn-failed");
+            notifyNetworkEvent((std::string((type & 0x80) ? "tcp" : "udp") + "::" + std::to_string(srcPort) + "::"
+                + std::to_string(dstIP) + ":" + std::to_string(dstPort) + "-createConn-failed-attempt to create connection from server side").c_str());            \
             return nullptr;
         }
 
-        ConnectionContext* ctx = (type & 0x80)? createTCP( dstIP, dstPort) : createUDP(srcPort);
+        ConnectionContext *ctx = (type & 0x80) ? createTCP(dstIP, dstPort) : createUDP(srcPort);
 
         // -------- publish under lock --------
         {
+            
             std::lock_guard<std::mutex> lock(mapMutex);
             auto it = connectionMap.find(key);
             if (it != connectionMap.end()) {
-                // There’s already a connection, so discard the new one
-                if (ctx) stopConnection(ctx);  // clean up the new connection we were about to insert
-                ctx = nullptr;                 // make sure we don't accidentally use it
+                tostop = ctx;// There’s already a connection, so discard the new one
+                ctx = it->second;            // make sure we don't accidentally use it
             }
-            else {
-                // No existing connection, insert the new one
+            else if (ctx)// No existing connection, insert the new one
                 connectionMap[key] = ctx;
-            }
+        }
+
+        if (tostop) {
+            stopConnection(tostop);
+            tostop = nullptr;
         }
 
 
@@ -334,27 +343,37 @@ public:
         if (size < 17) return false;
 
         MessageBlock* msg = new MessageBlock(rawData, size);
+        // -------- create connection if it is not already exist --------
 
-        // -------- get or create connection --------
-        ConnectionContext* ctx = createConnection(
+        createConnection(
             msg->getType(),
             msg->getSrcIP(), msg->getSrcPort(),
             msg->getDstIP(), msg->getDstPort(),
             false
         );
 
-        if (!ctx) {
-            delete msg;
-            return false;
-        }
 
-        // -------- enqueue message --------
+         // -------- enqueue message --------
         {
-            std::lock_guard<std::mutex> lock(ctx->outgoingMutex);
-            ctx->outgoingQueue.push_back(msg);
-        }
+            std::lock_guard<std::mutex> mapLock(mapMutex);
+            auto it = connectionMap.find(makeKey(
+                msg->getType(),
+                msg->getSrcIP(), msg->getSrcPort(),
+                msg->getDstIP(), msg->getDstPort()
+            ));
+            if (it == connectionMap.end()) {
+                delete msg;
+                return false;
+            }
+            ConnectionContext* ctx = it->second;
 
-        ctx->outgoingCV.notify_one();
+            {
+                std::lock_guard<std::mutex> lock(ctx->outgoingMutex);
+                ctx->outgoingQueue.push_back(msg);
+            }
+
+            ctx->outgoingCV.notify_one();
+        }
         return true;
     }
 

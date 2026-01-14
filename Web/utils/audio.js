@@ -142,7 +142,11 @@ export class OpusDecoder {
   }
 
   writePacket(uint8) {
-    const v = new DataView(uint8.buffer);
+    const v = new DataView(
+    uint8.buffer,
+    uint8.byteOffset,
+    uint8.byteLength
+  );;
     const chunk = new EncodedAudioChunk({
       type: v.getUint8(0) ? "delta" : "key",
       timestamp: Number(v.getBigUint64(1)),

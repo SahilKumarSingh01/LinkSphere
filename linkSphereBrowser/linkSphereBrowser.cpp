@@ -49,14 +49,14 @@ void onBrowserMessage(const BYTE* d, uint32_t s) {
     if (!g_net) return;
 
     bool success = g_net->sendMessage(d, s);
-    std::cout << "message received from browser\n";
+    //std::cout << "message received from browser\n";
 }
 
 void onNetworkMessage(const uint8_t* d, uint32_t s) {
     if (!g_browser) return;
 
     g_browser->sendMessage(d, s);
-    std::cout << "message send to browser\n";
+    //std::cout << "message send to browser\n";
 }
 
 void notifyNetworkEvent(const char* t) {

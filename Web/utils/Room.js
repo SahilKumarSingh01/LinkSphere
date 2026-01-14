@@ -10,9 +10,6 @@ export const PeerStatus = Object.freeze({
 
 export class Room {
   constructor() {
-    this.sampleRate = 0;
-    this.intervalMs = 20;
-    this.samplesPerInterval = 0;
 
     this.messageHandler = null;
 
@@ -49,8 +46,8 @@ export class Room {
 
     this.vote=new Set();
 
-    this.encoder=new OpusEncoder();
-    this.decoder=new OpusDecoder();
+    this.encoder=null;//new OpusEncoder();
+    this.decoder=null;//new OpusDecoder();
 
     this.micInterval=null;
     this.masterTimeout=null;
@@ -59,14 +56,12 @@ export class Room {
 
   }
 
-  async init(messageHandler, knownPeers = [], sampleRate = 8000,stream,roomId,isMaster=false) {
-    this.sampleRate = sampleRate;
-    this.samplesPerInterval = Math.floor(
-      (sampleRate * this.intervalMs) / 1000
-    );
-
+  async init(messageHandler, knownPeers = [],stream,roomId,isMaster=false,name="",photo="") {
+    this.name=name;
+    this.photo=photo;
     this.messageHandler = messageHandler;
-
+    this.encoder=new OpusEncoder();
+    this.decoder=new OpusDecoder();
     this.selfIP = this.messageHandler.getDefaultIP();
     this.selfPort = this.messageHandler.getTCPPort();
     this.roomId=roomId;
@@ -105,7 +100,9 @@ export class Room {
       MsgType.AUDIO_MIX,
       (srcIP, srcPort, dstIP, dstPort, type, payload) =>{
         if(srcIP!==this.currentMasterIP) return;
+        console.log("received",payload);
         this.onMixAudioRecieve(payload);
+        
       }
     );
 
@@ -115,7 +112,7 @@ export class Room {
         if(this.currentMasterIP!==this.selfIP)
           return;
 
-        this.mixerBuffer.get(srcIP)?.decoder.writeSamples(payload);
+        this.mixerBuffer.get(srcIP).decoder.writePacket(payload);
       }
     );
 
@@ -383,6 +380,7 @@ export class Room {
           MsgType.AUDIO_MIX,
           mixedAudio
         )
+        console.log("audio send",mixedAudio);
       })
 
       

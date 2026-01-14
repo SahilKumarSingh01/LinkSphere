@@ -30,13 +30,13 @@ export default class MessageHandler {
             this.pendingTCP ??= new Map();
             this.pendingTCP.set(p, setTimeout(
             async () => await this.removeConn((1<<7),a.ip, a.port, b.ip, b.port),
-                3000
+                30000
             ));
         });
 
     }
 
-    getDefaultIP = () => this.defaultIP;
+    getDefaultIP = () => this.iptoi(this.defaultIP.split('.'));
 
     
     clearPendingTCP(srcIP, srcPort, destIP, destPort) {

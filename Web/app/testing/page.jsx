@@ -99,7 +99,7 @@ export default function NativeInteractiveTest() {
   const sendMessage = ({ type, payload }) => {
     if (!handler) return;
     const srcIP = 0x7F000001;
-    const dstIP = 3232235622;
+    const dstIP = 172467315;
     const srcPort = type >= 128 ? 0 : 5000;
     const dstPort = type >= 128 ? 5173 : 5000;
     handler.sendMessage(srcPort, dstIP, dstPort, type, new TextEncoder().encode(payload));

@@ -178,11 +178,10 @@ public:
                 "-createConn-success"
                 ).c_str());
         }
-
+        WSASetEvent(ctx->interruptEvent);
         WSACloseEvent(ctx->connectEvent);
         ctx->connectEvent = NULL;
         ctx->running = true;
-        WSASetEvent(ctx->interruptEvent);
         return true;
     }
 
@@ -327,7 +326,7 @@ protected:
                     return;
                 }
                 if (r == 0) {
-                    notifyNetworkEvent((std::string("tcp::"+to_string(ctx->srcPort) + "::") + std::to_string(ctx->destIP) + ":" + std::to_string(ctx->destPort) + "-socket-close").c_str());
+                    notifyNetworkEvent((std::string("tcp::"+std::to_string(ctx->srcPort) + "::") + std::to_string(ctx->destIP) + ":" + std::to_string(ctx->destPort) + "-socket-close").c_str());
                     shutdown(ctx->sock, SD_BOTH);   //for other side to know i am done too
                     ctx->running = false;
                     return;
@@ -483,14 +482,15 @@ protected:
 
         ctx->running = false;
         ctx->outgoingCV.notify_all();
-
         SOCKET to_close = ctx->sock;
         
         if (to_close != INVALID_SOCKET) {
             if (ctx->isTCP) {
                 WSASetEvent(ctx->interruptEvent);
-                WSACloseEvent(ctx->interruptEvent);
+                std::cout << "we enter stop connection"+std::to_string(to_close) +"\n";
                 shutdown(to_close, SD_BOTH);
+                std::cout << "we exit stop connection" + std::to_string(to_close) + "\n";
+
             }
             else {
                 sockaddr_in a{};
@@ -507,12 +507,17 @@ protected:
 
         if (ctx->receiverThread.joinable()) ctx->receiverThread.join();
 
+
+        //if(ctx)
         if (to_close != INVALID_SOCKET) { closesocket(to_close); }
         ctx->sock = INVALID_SOCKET;
         for (auto msg : ctx->outgoingQueue) delete msg;
         ctx->outgoingQueue.clear();
+        if (ctx->interruptEvent)
+            WSACloseEvent(ctx->interruptEvent);
 
         delete ctx;
+
     }
 
 };
