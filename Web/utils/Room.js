@@ -137,11 +137,14 @@ export class Room {
 
       for(const [ip,peer] of this.peers)
         this.remove(peer.ip);
-      this.messageHandler.removeMessageHandler(MsgType.CONNECT_REQUEST);
-      this.messageHandler.removeMessageHandler(MsgType.CONNECT_REPLY);
-      this.messageHandler.removeMessageHandler(MsgType.CAST_VOTE);
-      this.messageHandler.removeMessageHandler(MsgType.AUDIO_MIX);
-      this.messageHandler.removeMessageHandler(MsgType.CLIENT_AUDIO);
+
+      if(this.messageHandler){
+        this.messageHandler.removeMessageHandler(MsgType.CONNECT_REQUEST);
+        this.messageHandler.removeMessageHandler(MsgType.CONNECT_REPLY);
+        this.messageHandler.removeMessageHandler(MsgType.CAST_VOTE);
+        this.messageHandler.removeMessageHandler(MsgType.AUDIO_MIX);
+        this.messageHandler.removeMessageHandler(MsgType.CLIENT_AUDIO);
+      }
 
   }
   unmute(){

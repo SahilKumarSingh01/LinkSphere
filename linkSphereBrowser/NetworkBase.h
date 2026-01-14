@@ -487,9 +487,9 @@ protected:
         if (to_close != INVALID_SOCKET) {
             if (ctx->isTCP) {
                 WSASetEvent(ctx->interruptEvent);
-                std::cout << "we enter stop connection"+std::to_string(to_close) +"\n";
+                //std::cout << "we enter stop connection"+std::to_string(to_close) +"\n";
                 shutdown(to_close, SD_BOTH);
-                std::cout << "we exit stop connection" + std::to_string(to_close) + "\n";
+                //std::cout << "we exit stop connection" + std::to_string(to_close) + "\n";
 
             }
             else {

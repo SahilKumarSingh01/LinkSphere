@@ -2,8 +2,11 @@
 import { useState, useRef, useEffect } from "react";
 import { Microphone, Speaker, OpusDecoder, OpusEncoder } from "@utils/audio";
 import { RingBuffer } from "@utils/RingBuffer";
-import { useMessageHandler } from "@context/MessageHandler.jsx";
 import WaveformVisualizer from "@components/WaveformVisualizer";
+import { Room } from "@utils/Room";
+import { useMessageHandler } from "@context/MessageHandler.jsx";
+import MessageHandler from "@utils/MessageHandler";
+
 
 const out = new Float32Array(512);
 
@@ -15,84 +18,19 @@ const Home = () => {
   const speakerRef = useRef(null);
   const encoderRef = useRef(null);
   const decoderRef = useRef(null);
+  const roomRef = useRef(new Room);
   const handler = useMessageHandler();
-  const ringBufferRef = useRef(new RingBuffer(8000));
-  // console.log("handler availabe",handler);
-  useEffect(()=>{
-    console.log("handler availabe",handler);
-    // console.log("this function is called");
-  },[handler]);
-  const startAudio = async () => {
-    if(started){
-      speakerRef.current.stop();
-      encoderRef.current.stop();
-      decoderRef.current.stop();
-      micRef.current.stop();
-      setStarted(false);
-      return;
+  // console.log("handler",handler);
+  const knownPeer=[
+    {
+      port:5173,
+      ip:172467315,
+    },
+    {
+      port:5173,
+      ip:172467453,
     }
-    setStarted(true);
-      // console.log("handler availabe",handler);
-
-
-    encoderRef.current = new OpusEncoder();
-    decoderRef.current = new OpusDecoder();
-    handler.setOnMessageReceive(
-          200,
-          (srcIP, srcPort, dstIP, dstPort, type, payload) =>
-            // this.onVote(srcIP, srcPort, dstIP, dstPort, type, payload)
-          {decoderRef.current.writePacket(payload);}
-        );
-    encoderRef.current.onData((packet) => {
-      // console.log("we are sending",packet);
-      handler.sendMessage(0,3232235621,5173,200,packet);
-
-      // console.log("encoder data",packet);
-      // decoderRef.current.writePacket(packet);
-
-    });
-
-    decoderRef.current.onData((pcm48) => {
-      // console.log("decoder data",pcm48.length);
-     // ringBufferRef.current.writeSamples(pcm48);
-     speakerRef.current.writeSamples(pcm48);
-     chunkRef.current=pcm48;
-      // while (ringBufferRef.current.availableToRead() >= 512) {
-      //   ringBufferRef.current.readSamples(out);
-      //   chunkRef.current = out;
-      //   speakerRef.current.writeSamples(out);
-      // }
-    });
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      micRef.current = new Microphone(stream);
-      speakerRef.current = new Speaker();
-
-      const interval = 1000;
-
-      setInterval(() => {
-        try {
-          const available = micRef.current.availableToRead();
-          console.log("available", available);
-
-          if (available > 0) {
-            const buffer = new Float32Array(available);
-            const read = micRef.current.readSamples(buffer);
-
-            if (read > 0) {
-              encoderRef.current.writeSamples(buffer);
-            }
-          }
-        } catch (err) {
-          console.error("[AUDIO LOOP ERROR]", err);
-        }
-      }, interval);
-    } catch (err) {
-      console.error("[MIC INIT ERROR]", err);
-    }
-
-  };
+  ]
 
   const handleDeviceChange = async () => {
     if (micRef.current) {
@@ -105,6 +43,21 @@ const Home = () => {
     }
     startAudio();
   };
+  useEffect(()=>{
+    (async()=>{
+      try{
+        if(handler){
+          console.log("handler",handler)
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          roomRef.current.init(handler,knownPeer,stream,123456789,true);
+        }
+      }catch(e){
+        console.log(e);
+      }
+    }
+    )();
+    return ()=>{roomRef.current.stop();};
+  },[handler])
 
   useEffect(() => {
     navigator.mediaDevices.addEventListener("devicechange", handleDeviceChange);
@@ -117,9 +70,9 @@ const Home = () => {
     <main style={{ padding: "2rem" }}>
       <h1>Audio Test</h1>
 
-      {(
-        <button onClick={startAudio}>
-          Allow Microphone & Start
+      {!started && (
+        <button onClick={()=>{roomRef.current.stop();}}>
+          stop
         </button>
       )}
 
