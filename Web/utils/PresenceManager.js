@@ -130,6 +130,57 @@ export class PresenceManager {
       }
     );
   }
+  async getMyPresence() {
+    // 1️⃣ Try localStorage first
+    let stored = localStorage.getItem("myPresence");
+    let data = stored ? JSON.parse(stored) : null;
+
+    if (data?.MyDiscInfo) {
+      return data.MyDiscInfo;
+    }
+
+    // 2️⃣ If no local presence, fetch from Firestore
+    if (!data?.MyDiscCred?.idToken || !data?.MyDiscCred?.username) {
+      return null;
+    }
+
+    // Refresh token if expired
+    if (Date.now() >= data.MyDiscCred.expiresIn) {
+      const refreshed = await this.refreshToken();
+      data.MyDiscCred.idToken = refreshed.idToken;
+      data.MyDiscCred.refreshToken = refreshed.refreshToken;
+      data.MyDiscCred.expiresIn = refreshed.expiresIn;
+      localStorage.setItem("myPresence", JSON.stringify(data));
+    }
+
+    const url =
+      `https://firestore.googleapis.com/v1/projects/${this.projectId}` +
+      `/databases/(default)/documents/organisation/${this.organisationName}` +
+      `/lastSeen/${data.MyDiscCred.username}`;
+
+    try {
+      const res = await axios.get(url, {
+        headers: {
+          Authorization: `Bearer ${data.MyDiscCred.idToken}`,
+        },
+      });
+
+      const raw = res.data?.fields?.presence?.stringValue;
+      if (!raw) return null;
+
+      const presence = JSON.parse(raw);
+
+      // 3️⃣ Cache it back to localStorage
+      data.MyDiscInfo = presence;
+      localStorage.setItem("myPresence", JSON.stringify(data));
+
+      return presence;
+    } catch (err) {
+      console.error("Failed to fetch my presence:", err);
+      return null;
+    }
+  }
+
 
 
   async renewToken(userInfo = {}) {

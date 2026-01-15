@@ -1,116 +1,146 @@
 @import "tailwindcss";
+@import "tailwindcss";
+
 :root {
   /* =========================
-     TEXT COLORS - Deep Coffee/Sienna 
+     TEXT COLORS
      ========================= */
-  --text-primary: 62 39 35;      /* Deep espresso brown */
+  --text-primary: 62 39 35;      /* Deep espresso */
   --text-secondary: 121 85 72;   /* Warm sienna */
   --text-tertiary: 161 136 127;  /* Muted tan */
 
   /* =========================
-     BACKGROUND COLORS - Sunbaked Parchment
+     BACKGROUND COLORS
      ========================= */
-  --bg-primary: 255 251 242;     /* Very soft cream parchment */
-  --bg-secondary: 255 243 224;   /* Pale sun-kissed amber */
-  --bg-tertiary: 255 236 179;    /* Muted golden glow */
+  --bg-primary: 255 251 242;     /* Parchment */
+  --bg-secondary: 255 243 224;   /* Pale amber */
+  --bg-tertiary: 255 236 179;    /* Muted gold */
 
   /* =========================
      BUTTON – PRIMARY (Vibrant Amber)
      ========================= */
-  --btn-primary: 255 179 0;      /* Core Amber */
-  --btn-primary-hover: 255 160 0; /* Slightly deeper gold */
-  --btn-primary-active: 251 140 0;/* Burnt orange-amber */
+  --btn-primary-bg: 255 179 0;
+  --btn-primary-hover: 255 160 0;
+  --btn-primary-active: 251 140 0;
+  --btn-primary-text: 62 39 35;
 
   /* =========================
-     BUTTON – DISABLED
+     BUTTON – SECONDARY (Toasted Almond)
+     REVISED: Darkened for visibility on parchment
      ========================= */
-  --btn-disabled: 236 224 209;   /* Desaturated clay */
-  --btn-disabled-text: 188 170 164;/* Muted stone */
+   --btn-secondary-bg: 141 110 99;    /* Medium Coffee/Clay (Distinct from BG) */
+   --btn-secondary-hover: 121 85 72;  /* Deepens on hover */
+   --btn-secondary-active: 109 76 65;
+   --btn-secondary-text: 255 251 242; /* Use Parchment color for text contrast */ 
 
   /* =========================
-     BUTTON – SECONDARY / TERTIARY
+     BUTTON – TERTIARY (Ghost)
      ========================= */
-  --btn-secondary-bg: 255 248 225;
-  --btn-secondary-hover: 255 236 179;
-  --btn-secondary-text: 143 102 0; /* Deep amber bronze */
+   --btn-tertiary-bg: 121 85 72 / 0.05; /* 5% Sienna tint - stays visible on all parchment */
+   --btn-tertiary-border: 121 85 72 / 0.4; /* Soft Sienna border */
+   --btn-tertiary-hover: 121 85 72 / 0.15;
+   --btn-tertiary-active: 121 85 72 / 0.25;
+   --btn-tertiary-text: 121 85 72; /* Strong Sienna text */
 
-  --btn-tertiary-hover: 255 243 224;
+   /* =========================
+      BUTTON – DISABLED (The "Bleached Paper")
+      Logic: Reduced contrast + greyed-out coffee tones.
+      ========================= */
+   --btn-disabled-bg: 242 238 231;    /* Faded parchment */
+   --btn-disabled-border: 220 215 205; 
+   --btn-disabled-text: 180 170 160;  /* Faded stone */
 }
 
 @media (prefers-color-scheme: dark) { 
    :root {
-      /* =========================
-         TEXT COLORS - Silk & Honey
-         ========================= */
-      --text-primary: 245 230 211;   /* Soft silk, avoids "stark white" eye strain */
-      --text-secondary: 212 180 131; /* Desaturated amber-tan */
-      --text-tertiary: 141 119 95;   /* Smoky copper */
+      --text-primary: 245 230 211; 
+      --text-secondary: 212 180 131;
+      --text-tertiary: 141 119 95;
 
-      /* =========================
-         BACKGROUND COLORS - Smoky Espresso (No Blue)
-         ========================= */
-      --bg-primary: 27 20 15;        /* Deepest charred oak */
-      --bg-secondary: 44 30 22;      /* Deep cocoa roast */
-      --bg-tertiary: 62 44 34;       /* Warm smoky walnut */
+      --bg-primary: 27 20 15;        /* Charred oak */
+      --bg-secondary: 44 30 22;      /* Cocoa */
+      --bg-tertiary: 62 44 34;       /* Walnut */
 
-      /* =========================
-         BUTTON – PRIMARY (Glowing Ember)
-         ========================= */
-      --btn-primary: 198 155 61;     /* Muted "Old Gold" */
-      --btn-primary-hover: 212 167 79;/* Luminous amber */
-      --btn-primary-active: 176 138 51;/* Pressed bronze */
+      /* BUTTON – PRIMARY */
+      --btn-primary-bg: 198 155 61;
+      --btn-primary-hover: 212 167 79;
+      --btn-primary-active: 176 138 51;
+      --btn-primary-text: 27 20 15;
 
-      /* =========================
-         BUTTON – DISABLED
-         ========================= */
-      --btn-disabled: 58 45 37;      /* Dark bark */
-      --btn-disabled-text: 98 84 76; /* Faded coffee ground */
+      /* BUTTON – SECONDARY (Smoky Silt) */
+      --btn-secondary-bg: 93 64 55;      /* Warm Walnut */
+      --btn-secondary-hover: 121 85 72;
+      --btn-secondary-active: 78 52 46;
+      --btn-secondary-text: 245 230 211; /* Silk text */
 
-      /* =========================
-         BUTTON – SECONDARY / TERTIARY
-         ========================= */
-      --btn-secondary-bg: 62 44 34;   
-      --btn-secondary-hover: 84 60 45;
-      --btn-secondary-text: 255 193 7; /* Sharp amber-gold text */
+      --btn-tertiary-bg: 212 180 131 / 0.12; 
+      --btn-tertiary-hover: 212 180 131 / 0.2;
+      --btn-tertiary-active: 212 180 131 / 0.3;
+      --btn-tertiary-text: 212 180 131;
 
-      --btn-tertiary-hover: 84 60 45;
+      --btn-disabled-bg: 52 42 36;      /* Lifted slightly above bg-secondary */
+      --btn-disabled-text: 125 115 105; /* Pushed significantly lighter for legibility */
    }
 }
 
-
 @theme {
-  /* =========================
-     TEXT COLORS
-     ========================= */
+  /* --- Text Colors --- */
   --color-text-primary: rgb(var(--text-primary));
   --color-text-secondary: rgb(var(--text-secondary));
   --color-text-tertiary: rgb(var(--text-tertiary));
 
-  /* =========================
-     BACKGROUND COLORS
-     ========================= */
+  /* --- Background Colors --- */
   --color-bg-primary: rgb(var(--bg-primary));
   --color-bg-secondary: rgb(var(--bg-secondary));
   --color-bg-tertiary: rgb(var(--bg-tertiary));
 
-  /* =========================
-     BUTTON – PRIMARY
-     ========================= */
-  --color-btn-primary: rgb(var(--btn-primary));
+  /* --- Button: Primary --- */
+  --color-btn-primary: rgb(var(--btn-primary-bg));
   --color-btn-primary-hover: rgb(var(--btn-primary-hover));
   --color-btn-primary-active: rgb(var(--btn-primary-active));
+  --color-btn-primary-text: rgb(var(--btn-primary-text));
 
-  /* =========================
-     BUTTON – DISABLED
-     ========================= */
-  --color-btn-disabled: rgb(var(--btn-disabled));
-  --color-btn-disabled-text: rgb(var(--btn-disabled-text));
-
-  /* =========================
-     BUTTON – SECONDARY / TERTIARY
-     ========================= */
+  /* --- Button: Secondary --- */
   --color-btn-secondary: rgb(var(--btn-secondary-bg));
   --color-btn-secondary-hover: rgb(var(--btn-secondary-hover));
+  --color-btn-secondary-active: rgb(var(--btn-secondary-active));
   --color-btn-secondary-text: rgb(var(--btn-secondary-text));
+
+  /* --- Button: Tertiary --- */
+  --color-btn-tertiary: rgb(var(--btn-tertiary-bg));
   --color-btn-tertiary-hover: rgb(var(--btn-tertiary-hover));
+  --color-btn-tertiary-active: rgb(var(--btn-tertiary-active));
+  --color-btn-tertiary-text: rgb(var(--btn-tertiary-text));
+
+  /* --- Button: Disabled --- */
+  --color-btn-disabled: rgb(var(--btn-disabled-bg));
+  --color-btn-disabled-text: rgb(var(--btn-disabled-text));
 }
+
+@layer utilities {
+    /* Chrome, Safari and Opera */
+    .no-scrollbar::-webkit-scrollbar {
+      display: none;
+    }
+
+    .no-scrollbar {
+      -ms-overflow-style: none; /* IE and Edge */
+      scrollbar-width: none; /* Firefox */
+    }
+}
+
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.scale-in {
+  animation: scaleIn 0.5s ease-out both;
+}
+

@@ -3,7 +3,7 @@ import { FaInfoCircle } from "react-icons/fa";
 
 export default function Navbar() {
   return (
-    <nav className="flex items-center justify-between px-6 py-4 bg-btn-primary text-text-primary shadow-md">
+    <nav className="sticky top-0 z-50 flex items-center justify-between px-6 py-4 bg-btn-primary text-text-primary shadow-md">
       <Link
         href="/"
         className="text-2xl font-bold hover:text-text-secondary transition-colors"
