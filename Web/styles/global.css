@@ -35,6 +35,10 @@
   --btn-secondary-text: 143 102 0; /* Deep amber bronze */
 
   --btn-tertiary-hover: 255 243 224;
+
+  --react-icon-fill: 0 255 255;
+
+   --border-color: 0 0 0;
 }
 
 @media (prefers-color-scheme: dark) { 
@@ -74,6 +78,10 @@
       --btn-secondary-text: 255 193 7; /* Sharp amber-gold text */
 
       --btn-tertiary-hover: 84 60 45;
+
+       --react-icon-fill: 0 255 255;
+
+       --border-color: 255 255 255;
    }
 }
 
@@ -113,4 +121,8 @@
   --color-btn-secondary-hover: rgb(var(--btn-secondary-hover));
   --color-btn-secondary-text: rgb(var(--btn-secondary-text));
   --color-btn-tertiary-hover: rgb(var(--btn-tertiary-hover));
+
+  --color-react-icon: rgb(var(--react-icon-fill));
+
+  --color-border-color:rgb(var(--border-color));
 }

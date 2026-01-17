@@ -1,62 +1,92 @@
-"use client"
-import React from 'react'
-import UserCard from './UserCard';
-const onlineUserList = [
-    { name: "user1", image: "/image/boy.jpg", descripton: "hello, this is user1 " },
-    { name: "user2", image: "/image/girl.jpg", descripton: "hello, this is user2 " },
-    { name: "user3" , descripton: "hello, this is user3 " },
-    { name: "user4", image: "/image/boy.jpg", descripton: "hello, this is user4 " },
-    { name: "user5", image: "/image/boy.jpg", descripton: "hello, this is user5 " },
-    { name: "user6", image: "/image/girl.jpg", descripton: "hello, this is user6" },
-    { name: "user7", image: "/image/girl.jpg", descripton: "hello, this is user7" },
-    { name: "user8",  descripton: "hello, this is user8" },
-    
-  ];
+"use client";
+import React, { useEffect, useRef } from "react";
+import UserCard from "./UserCard";
+import { useSidePan } from "@context/SidePanContext.jsx";
 
-function SidePan({setIsSidePanOpen, isSidePanOpen}) {
+const onlineUserList = [
+  { name: "user1", image: "/image/boy.jpg" },
+  { name: "user2", image: "/image/girl.jpg" },
+  { name: "user3" },
+  { name: "user4", image: "/image/boy.jpg" },
+  { name: "user5", image: "/image/boy.jpg" },
+  { name: "user6", image: "/image/girl.jpg" },
+  { name: "user7", image: "/image/girl.jpg" },
+  { name: "user8" },
+];
+
+function SidePan() {
+  const { isSidePanOpen, setIsSidePanOpen } = useSidePan();
+  const scrollRef = useRef(null);
+
+  // Prevent body scroll when cursor is over sidePan
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+
+    const wheelHandler = (e) => {
+      const delta = e.deltaY;
+      const scrollTop = el.scrollTop;
+      const scrollHeight = el.scrollHeight;
+      const clientHeight = el.clientHeight;
+
+      // If scrolling up at top or down at bottom, prevent body scroll
+      if ((delta < 0 && scrollTop === 0) || (delta > 0 && scrollTop + clientHeight >= scrollHeight)) {
+        e.preventDefault();
+      }
+      // else let the sidePan scroll normally
+    };
+
+    el.addEventListener("wheel", wheelHandler, { passive: false });
+
+    return () => {
+      el.removeEventListener("wheel", wheelHandler);
+    };
+  }, [isSidePanOpen]);
+
   return (
     <>
-     <div
+      {/* Overlay */}
+      <div
         onClick={() => setIsSidePanOpen(false)}
         className={`
-          fixed top-16 inset-x-0 bottom-0 bg-black/40 z-40
-          transition-opacity duration-300
-          ${isSidePanOpen ? "opacity-100" : "opacity-0 pointer-events-none"}
+          fixed top-2 bottom-1 inset-x-0 bg-bg-secondary z-40
+          transition-opacity duration-300 
+          ${isSidePanOpen ? "opacity-10" : "opacity-0 pointer-events-none"}
         `}
       />
 
-        <aside
-   className={`
-    fixed top-16 left-0 z-50
-    w-96 h-[calc(100vh-4rem)]
-    bg-[#1e1b2e]
-    shadow-2xl
-    transform transition-transform duration-300
-    ${isSidePanOpen ? "translate-x-0" : "-translate-x-full"}
-  `}
-    >
-        <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
-          <h2 className="text-white text-lg font-semibold">
-            Online Users
-          </h2>
-          <button
-            onClick={() => setIsSidePanOpen(false)}
-            className="text-white text-xl"
-          >
+      {/* SidePan */}
+      <aside
+        className={`
+          fixed top-2 bottom-1 right-1 z-50
+          w-96
+          bg-bg-secondary
+          shadow-2xl
+          border border-border-color
+          rounded-xl
+          transform transition-transform duration-300
+          ${isSidePanOpen ? "translate-x-0" : "translate-x-[110%]"}
+        `}
+      >
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border-color">
+          <h2 className="text-text-primary text-lg font-semibold">Online Users</h2>
+          <button onClick={() => setIsSidePanOpen(false)} className="text-text-primary text-xl">
             ✕
           </button>
         </div>
-        <div className='h-2'></div>
 
-        {/* Content */}
-        <div className=" flex flex-col p-4 overflow-y-auto h-[calc(100%-56px)] gap-1.5 items-center ">
-          {onlineUserList.map((user,index)=>(<UserCard key={index} imageLink={user.image} name={user.name} description={user.descripton}/>))}
+        {/* Content with controlled scrolling */}
+        <div
+          ref={scrollRef}
+          className="flex flex-col p-3 overflow-y-auto h-[calc(100%-56px)] gap-1.5 items-center"
+        >
+          {onlineUserList.map((user, index) => (
+            <UserCard key={index} imageLink={user.image} name={user.name} />
+          ))}
         </div>
-        
-    </aside>
-   
+      </aside>
     </>
-  )
+  );
 }
 
-export default SidePan
+export default SidePan;
