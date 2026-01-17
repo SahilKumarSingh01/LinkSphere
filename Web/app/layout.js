@@ -6,8 +6,8 @@ import { SidePanProvider } from "@context/SidePanContext.jsx";
 
 export default function RootLayout({ children }) {
   return (
-    <html lang="en">
-      <body>
+    <html lang="en" className="no-scrollbar">
+      <body className="min-h-screen flex flex-col">
         <MessageHandlerProvider>
           <PresenceManagerProvider>
             <SidePanProvider>
