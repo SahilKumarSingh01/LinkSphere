@@ -168,7 +168,7 @@ export default class MessageHandler {
             if (msg === "done") {
                 this.removeNotificationHandler("IpAssigned", handler);
                 resolve(this.localIPs);
-                console.log(this.localIPs);
+                // console.log(this.localIPs);
                 return;
             }
 

@@ -6,6 +6,7 @@ import { useMessageHandler } from "@context/MessageHandler.jsx";
 import { usePresenceManager } from "@context/PresenceManager";
 import { ImageManager } from "@utils/ImageManager";
 import ImageCropper from "@components/ImageCropper";
+const MAX_LEN = 20;
 
 export default function GetStartedPage() {
         // orgList in state (replace later with fetched data)
@@ -14,23 +15,25 @@ export default function GetStartedPage() {
   const [editingName, setEditingName] = useState(false);
   const [editingPhoto, setEditingPhoto] = useState(false);
 
-  const [organization, setOrganization] = useState(orgList[0]);
+  const [organisation, setOrganisation] = useState(orgList[0]);
   const [editingOrg, setEditingOrg] = useState(false);
   const [photo, setPhoto] = useState(""); // empty → fallback avatar
   const [imageSrc,setImageSrc]=useState("");
   const managerRef=useRef(new ImageManager());
   const router = useRouter();
   const messageHandler=useMessageHandler();
-  const presenceManager=usePresenceManager();
+  const {presenceManager}=usePresenceManager();
   
   useEffect(()=>{
     if(messageHandler&&presenceManager){
       (async()=>{
         managerRef.current.setPrivateIP(messageHandler.getDefaultIP());
-        managerRef.current.setOrganisation(organization);
-        presenceManager.setOrganisation(organization);
-        const discInfo=await presenceManager.getMyPresence();
-        setPhoto(discInfo.userInfo.photo);
+        const data=await presenceManager.getMyPresence();
+        setPhoto(data.userInfo?.photo||photo);
+        setUserName(data.userInfo?.name||userName);
+        setOrganisation(data.userInfo?.organisation||organisation);
+        managerRef.current.setOrganisation(data.userInfo?.organisation||organisation);
+        presenceManager.setOrganisation(data.userInfo?.organisation||organisation);
       }
       )()
     }
@@ -40,22 +43,31 @@ export default function GetStartedPage() {
       if(photo){
         setImageSrc(await managerRef.current.getImage(photo));
       }
-      // setImageSrc(i)
     }
     fetchPhoto();
-  },photo)
+  },[photo])
+
   const handleImageUpload=async ( file,croppedAreaPixels)=>{
     if(managerRef.current){
       // console.log(file,croppedAreaPixels);
       const photo=await managerRef.current.uploadImage(file,croppedAreaPixels);
+      presenceManager.updateMyPresence({photo});
       setPhoto(photo);
       setEditingPhoto(false);
-      console.log("here is your photo",photo);
+      // console.log("here is your photo",photo);
     }
   }
-  const handleHopIn=()=>{
-    presenceManager.updateMyPresence({name:userName,photo});
-    // router.push("/rooms");
+  const handleRemovePhoto = async () => {
+    setPhoto(null);
+    setImageSrc("");
+    await presenceManager.updateMyPresence({ photo: null });
+  };
+
+  
+  const handleHopIn=async ()=>{
+    router.push("/rooms");
+    await presenceManager.updateMyPresence({name:userName,photo});
+    // await presenceManager.activate();
   } 
 
   return (
@@ -79,20 +91,26 @@ export default function GetStartedPage() {
               />
             ) : (
             <div className="w-24 h-24 rounded-full bg-gradient-to-br from-btn-primary to-btn-primary-active flex items-center justify-center text-text-primary font-bold text-3xl">
-
-                {userName.charAt(0)}
-              </div>
+              {userName.charAt(0)}
+            </div>
             )}
-            <button
-              onClick={() => {
-                setEditingPhoto(true);
-                // const newUrl = prompt("Enter image URL", photo);
-                // if (newUrl !== null) setphoto(newUrl);
-              }}
-              className="absolute bottom-0 right-0 bg-bg-primary text-text-secondary px-1 py-1 rounded-full text-xs hover:bg-bg-tertiary transition"
-            >
-              Edit
-            </button>
+            <div className="absolute bottom-0 right-0 flex justify-end gap-4">
+              {photo && (
+                <button
+                  onClick={handleRemovePhoto}
+                  className="bg-bg-primary text-red-400 px-1 py-1 rounded-full text-xs hover:bg-bg-tertiary transition"
+                >
+                  Clear
+                </button>
+              )}
+              <button
+                onClick={() => setEditingPhoto(true)}
+                className="bg-bg-primary text-text-secondary px-1 py-1 rounded-full text-xs hover:bg-bg-tertiary transition"
+              >
+                Edit
+              </button>
+            </div>
+
           </div>
 
           {/* Name */}
@@ -100,14 +118,35 @@ export default function GetStartedPage() {
             <p className="text-sm text-text-secondary mb-1">Name</p>
             {editingName ? (
               <div className="flex justify-center items-center gap-2">
-                <input
-                  type="text"
-                  value={userName}
-                  onChange={(e) => setUserName(e.target.value)}
-                  className="px-3 py-2 rounded-lg border border-gray-300 outline-none text-text-primary bg-bg-primary"
-                />
+                <div className="flex flex-col items-center gap-1">
+                  <input
+                    type="text"
+                    value={userName}
+                    maxLength={MAX_LEN}
+                    onChange={(e) => setUserName(e.target.value)}
+                    className="px-3 py-3 rounded-lg border border-gray-300 outline-none text-text-primary bg-bg-primary"
+                  />
+
+                  {!userName.length ||userName.length === MAX_LEN? (
+                    <span className="absolute text-xs text-red-500">
+                      {userName.length?"Maximum length reached":"Username is required"}
+                    </span>
+                  ):(
+                  <span className="absolute text-xs text-gray-500">
+                    {userName.length}/{MAX_LEN}
+                  </span>
+                  )}
+                </div>
+
                 <button
-                  onClick={() => setEditingName(false)}
+                  onClick={() =>
+                    setUserName((curName) => {
+                      if(!curName.length)return "";
+                      presenceManager.updateMyPresence({name:curName});
+                      setEditingName(false);
+                      return curName; // keep state unchanged
+                    })
+                  }
                   className="px-3 py-2 bg-btn-primary text-white rounded-lg hover:bg-btn-primary-hover transition"
                 >
                   Save
@@ -126,14 +165,14 @@ export default function GetStartedPage() {
             )}
           </div>
 
-          {/* Organization */}
+          {/* Organisation */}
           <div className="w-full flex flex-col items-center">
-            <p className="text-sm text-text-secondary mb-1">Organization</p>
+            <p className="text-sm text-text-secondary mb-1">Organisation</p>
             {editingOrg ? (
               <div className="flex justify-center items-center gap-2">
                 <select
-                  value={organization}
-                  onChange={(e) => setOrganization(e.target.value)}
+                  value={organisation}
+                  onChange={(e) => setOrganisation(e.target.value)}
                   className="px-3 py-2 rounded-lg bg-bg-primary outline-none text-text-primary"
                 >
                   {orgList.map((org, idx) => (
@@ -143,15 +182,22 @@ export default function GetStartedPage() {
                   ))}
                 </select>
                 <button
-                  onClick={() => setEditingOrg(false)}
-                  className="px-3 py-2 bg-btn-primary text-white rounded-lg hover:bg-btn-primary-hover transition"
+                onClick={() =>
+                    setOrganisation((organisation) => {
+                      managerRef.current.setOrganisation(organisation);
+                      presenceManager.setOrganisation(organisation);  
+                      presenceManager.updateMyPresence({organisation});                    
+                      setEditingOrg(false);
+                      return organisation; // keep state unchanged
+                    })}
+                    className="px-3 py-2 bg-btn-primary text-white rounded-lg hover:bg-btn-primary-hover transition"
                 >
                   Save
                 </button>
               </div>
             ) : (
               <div className="flex justify-center items-center gap-2">
-                <p className="text-xl font-semibold">{organization}</p>
+                <p className="text-xl font-semibold">{organisation}</p>
                 <button
                   onClick={() => setEditingOrg(true)}
                   className="text-xs text-text-secondary hover:text-text-primary transition"

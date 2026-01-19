@@ -9,19 +9,26 @@ export const PresenceManagerContext = createContext(null);
 export function PresenceManagerProvider({ children }) {
     const messageHandler = useMessageHandler();
     const presenceRef = useRef(null);
+    const [users,setUsers] =useState([]);
     const [presenceManager, setPresenceManager] = useState(null);
 
     useEffect(() => {
         if (!messageHandler) return;
 
         if (!presenceRef.current) {
-            presenceRef.current = new PresenceManager(messageHandler);
-            setPresenceManager(presenceRef.current);
+            (async ()=>{
+                presenceRef.current = new PresenceManager(messageHandler);
+                const data = await presenceRef.current.getMyPresence();
+                const org = data.userInfo?.organisation;
+                presenceRef.current.setOrganisation(org);
+                setPresenceManager(presenceRef.current);
+                presenceRef.current.setOnUserUpdate((users)=>{setUsers(users)});
+            })();
         }
     }, [messageHandler]);
 
     return (
-        <PresenceManagerContext.Provider value={presenceManager}>
+        <PresenceManagerContext.Provider value={{presenceManager,users}}>
             {children}
         </PresenceManagerContext.Provider>
     );

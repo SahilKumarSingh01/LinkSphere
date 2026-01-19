@@ -1,6 +1,6 @@
 const AboutPage = () => {
   return (
-    <div className="min-h-screen bg-bg-primary text-text-primary py-12">
+    <div className="min-h-screen bg-bg-primary text-text-primary py-12 scale-in">
       {/* Centered "card" with secondary background */}
       <div className="max-w-4xl mx-auto px-6 py-12 bg-bg-secondary rounded-xl shadow-lg">
         <h1 className="text-4xl font-bold mb-6 text-text-primary">

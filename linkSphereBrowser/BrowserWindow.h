@@ -4,6 +4,8 @@
 #include <WebView2.h>
 #include <string>
 #include <thread>
+#include <WebView2EnvironmentOptions.h>
+
 //#include <iostream>
 #include "Resource.h"
 
@@ -93,18 +95,19 @@ protected:
     void initWebView() {
         createWebViewEnvironment();
     }
+void createWebViewEnvironment() {
+    auto options = Microsoft::WRL::Make<CoreWebView2EnvironmentOptions>();
+    options->put_AdditionalBrowserArguments(L"--disable-features=ElasticOverscroll,OverscrollHistoryNavigation");
 
-    void createWebViewEnvironment() {
-        CreateCoreWebView2EnvironmentWithOptions(
-            nullptr, nullptr, nullptr,
-            Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
-                [this](HRESULT hr, ICoreWebView2Environment* env) -> HRESULT {
-                    return onWebViewEnvironmentCreated(hr, env);
-                }
-            ).Get()
-        );
-
-    }
+    CreateCoreWebView2EnvironmentWithOptions(
+        nullptr, nullptr, options.Get(),
+        Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
+            [this](HRESULT hr, ICoreWebView2Environment* env) -> HRESULT {
+                return onWebViewEnvironmentCreated(hr, env);
+            }
+        ).Get()
+    );
+}
 
     HRESULT onWebViewEnvironmentCreated(HRESULT hr, ICoreWebView2Environment* env) {
         if (!env) return E_FAIL;
@@ -166,6 +169,7 @@ protected:
         wil::com_ptr<ICoreWebView2Settings> settings;
         webview->get_Settings(&settings);
         if (settings) {
+            settings->put_IsZoomControlEnabled(FALSE);     // ✅ disables pinch/stretch
             settings->put_AreDevToolsEnabled(FALSE);
             settings->put_IsStatusBarEnabled(FALSE);
             settings->put_AreDefaultContextMenusEnabled(FALSE);
@@ -178,6 +182,11 @@ protected:
         wil::com_ptr<ICoreWebView2Settings3> settings3;
         if (SUCCEEDED(settings->QueryInterface(IID_PPV_ARGS(&settings3)))) {
             settings3->put_AreBrowserAcceleratorKeysEnabled(FALSE);
+        }
+        auto settings6 = settings.try_query<ICoreWebView2Settings6>();
+        if (settings6) {
+            // Disables both horizontal swipe navigation and vertical pull-to-refresh
+            settings6->put_IsSwipeNavigationEnabled(FALSE);
         }
     }
 

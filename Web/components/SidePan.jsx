@@ -1,88 +1,93 @@
 "use client";
-import React, { useEffect, useRef } from "react";
+
+import { useEffect, useState } from "react";
 import UserCard from "./UserCard";
-import { useSidePan } from "@context/SidePanContext.jsx";
+import { usePresenceManager } from "@context/PresenceManager.jsx";
+import { useImageManager } from "@context/ImageManager.jsx";
 
-const onlineUserList = [
-  { name: "user1", image: "/image/boy.jpg" },
-  { name: "user2", image: "/image/girl.jpg" },
-  { name: "user3" },
-  { name: "user4", image: "/image/boy.jpg" },
-  { name: "user5", image: "/image/boy.jpg" },
-  { name: "user6", image: "/image/girl.jpg" },
-  { name: "user7", image: "/image/girl.jpg" },
-  { name: "user8" },
-];
+const ANIMATION_DURATION = 300;
 
-function SidePan() {
-  const { isSidePanOpen, setIsSidePanOpen } = useSidePan();
-  const scrollRef = useRef(null);
+function SidePan({ onClose }) {
+  const { users } = usePresenceManager();
+  const imageManager = useImageManager();
 
-  // Prevent body scroll when cursor is over sidePan
+  const [visible, setVisible] = useState(false);
+  const [imageMap, setImageMap] = useState(new Map());
+
+  /* ---------- LOAD USER IMAGES (same pattern as UserPhotoGrid) ---------- */
   useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
+    let cancelled = false;
 
-    const wheelHandler = (e) => {
-      const delta = e.deltaY;
-      const scrollTop = el.scrollTop;
-      const scrollHeight = el.scrollHeight;
-      const clientHeight = el.clientHeight;
+    const loadImages = async () => {
+      const map = new Map();
 
-      // If scrolling up at top or down at bottom, prevent body scroll
-      if ((delta < 0 && scrollTop === 0) || (delta > 0 && scrollTop + clientHeight >= scrollHeight)) {
-        e.preventDefault();
+      for (const user of users) {
+        const photoId = user.userInfo?.photo;
+        if (!photoId) continue;
+
+        const img = await imageManager.getImage(photoId);
+        if (img) map.set(photoId, img);
       }
-      // else let the sidePan scroll normally
+
+      if (!cancelled) setImageMap(map);
     };
 
-    el.addEventListener("wheel", wheelHandler, { passive: false });
+    loadImages();
+    return () => { cancelled = true; };
+  }, [users, imageManager]);
 
-    return () => {
-      el.removeEventListener("wheel", wheelHandler);
-    };
-  }, [isSidePanOpen]);
+  /* ---------- ENTER ANIMATION ---------- */
+  useEffect(() => {
+    requestAnimationFrame(() => setVisible(true));
+  }, []);
+
+  const closeWithAnimation = () => {
+    setVisible(false);
+    setTimeout(onClose, ANIMATION_DURATION);
+  };
 
   return (
     <>
-      {/* Overlay */}
       <div
-        onClick={() => setIsSidePanOpen(false)}
-        className={`
-          fixed top-2 bottom-1 inset-x-0 bg-bg-secondary z-40
-          transition-opacity duration-300 
-          ${isSidePanOpen ? "opacity-10" : "opacity-0 pointer-events-none"}
-        `}
+        onClick={closeWithAnimation}
+        className={
+          visible
+            ? "fixed inset-0 z-40 bg-black/40 opacity-100 transition-opacity duration-300"
+            : "fixed inset-0 z-40 bg-black/40 opacity-0 transition-opacity duration-300"
+        }
       />
 
-      {/* SidePan */}
       <aside
-        className={`
-          fixed top-2 bottom-1 right-1 z-50
-          w-96
-          bg-bg-secondary
-          shadow-2xl
-          border border-border-color
-          rounded-xl
-          transform transition-transform duration-300
-          ${isSidePanOpen ? "translate-x-0" : "translate-x-[110%]"}
-        `}
+        className={
+          visible
+            ? "fixed top-2 bottom-1 right-1 z-50 w-96 bg-bg-secondary border border-border-color rounded-xl shadow-2xl translate-x-0 transition-transform duration-300 ease-out"
+            : "fixed top-2 bottom-1 right-1 z-50 w-96 bg-bg-secondary border border-border-color rounded-xl shadow-2xl translate-x-full transition-transform duration-300 ease-out"
+        }
       >
         <div className="flex items-center justify-between px-4 py-3 border-b border-border-color">
-          <h2 className="text-text-primary text-lg font-semibold">Online Users</h2>
-          <button onClick={() => setIsSidePanOpen(false)} className="text-text-primary text-xl">
+          <h2 className="text-text-primary text-lg font-semibold">
+            Online Users
+          </h2>
+          <button onClick={closeWithAnimation} className="text-text-primary text-xl">
             ✕
           </button>
         </div>
 
-        {/* Content with controlled scrolling */}
-        <div
-          ref={scrollRef}
-          className="flex flex-col p-3 overflow-y-auto h-[calc(100%-56px)] gap-1.5 items-center"
-        >
-          {onlineUserList.map((user, index) => (
-            <UserCard key={index} imageLink={user.image} name={user.name} />
+        <div className="flex flex-col p-3 overflow-y-auto h-[calc(100%-56px)] gap-1.5 items-center no-scrollbar">
+          {users?.map((user) => (
+            <UserCard
+              key={user?.privateIP}
+              name={user.userInfo?.name || "Anonymous"}
+              imageLink={imageMap.get(user.userInfo?.photo)}
+              lastSeen={user?.lastSeen}
+            />
           ))}
+
+          {!users?.length && (
+            <span className="text-sm text-text-secondary text-center mt-4">
+              No users online
+            </span>
+          )}
         </div>
       </aside>
     </>
