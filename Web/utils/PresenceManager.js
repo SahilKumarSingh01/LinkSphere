@@ -22,6 +22,8 @@ export class PresenceManager {
     // console.log("its constructor is called",this.messageHandler.getAllIPs());
   }
   
+  getLocalUsers(){return this.localUsers;}
+
   setOrganisation(name) { this.organisationName = name; }
 
   getOrganisation() { return this.organisationName; }

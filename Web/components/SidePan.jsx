@@ -63,7 +63,7 @@ function SidePan() {
           bg-bg-secondary
           shadow-2xl
           border border-border-color
-          rounded-xl
+          rounded-xl 
           transform transition-transform duration-300
           ${isSidePanOpen ? "translate-x-0" : "translate-x-[110%]"}
         `}
@@ -78,7 +78,7 @@ function SidePan() {
         {/* Content with controlled scrolling */}
         <div
           ref={scrollRef}
-          className="flex flex-col p-3 overflow-y-auto h-[calc(100%-56px)] gap-1.5 items-center"
+          className="flex flex-col p-3 overflow-y-auto h-[calc(100%-56px)] gap-1.5 items-center no-scrollbar"
         >
           {onlineUserList.map((user, index) => (
             <UserCard key={index} imageLink={user.image} name={user.name} />

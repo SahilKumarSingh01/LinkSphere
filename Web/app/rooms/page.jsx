@@ -1,5 +1,7 @@
 'use client'
-import React from 'react'
+import { useState ,useEffect,useRef} from "react";
+import { usePresenceManager } from "@context/PresenceManager";
+
 import RoomCard from '@components/RoomCard'
 import { useSidePan } from '@context/SidePanContext';
 import { BsFillPersonLinesFill } from "react-icons/bs";
@@ -7,6 +9,13 @@ import SidePan from '@components/SidePan.jsx';
 
 function page() {
   const {isSidePanOpen,setIsSidePanOpen}=useSidePan();
+  const presenceManager=usePresenceManager();
+  useEffect(()=>{
+    if(presenceManager){
+      const users=presenceManager.getLocalUsers();
+      console.log(users);
+    }
+  },[presenceManager])
   return (
     <>
       <div className='bg-bg-primary min-h-screen'>

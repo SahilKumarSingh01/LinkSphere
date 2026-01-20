@@ -43,7 +43,7 @@ export default function GetStartedPage() {
       // setImageSrc(i)
     }
     fetchPhoto();
-  },photo)
+  },[photo])
   const handleImageUpload=async ( file,croppedAreaPixels)=>{
     if(managerRef.current){
       // console.log(file,croppedAreaPixels);
@@ -55,7 +55,8 @@ export default function GetStartedPage() {
   }
   const handleHopIn=()=>{
     presenceManager.updateMyPresence({name:userName,photo});
-    // router.push("/rooms");
+    presenceManager.fetchAllUsers();
+    router.push("/rooms");
   } 
 
   return (
