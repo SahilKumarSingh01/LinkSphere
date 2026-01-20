@@ -10,7 +10,7 @@ export const PeerStatus = Object.freeze({
 
 export class Room {
   constructor() {
-
+    console.log("log room is created ");
     this.messageHandler = null;
 
     this.selfIP = null;
@@ -56,7 +56,7 @@ export class Room {
 
   }
 
-  async init(messageHandler, knownPeers = [],stream,roomId,isMaster=false,name="",photo="") {
+  init(messageHandler,stream,roomId,name="",photo="") {//this can't be made async 
     this.name=name;
     this.photo=photo;
     this.messageHandler = messageHandler;
@@ -69,11 +69,11 @@ export class Room {
     this.speaker=new Speaker();
     this.microphone=new Microphone(stream);
 
-    for (const peer of knownPeers) {
-      this.connect(peer);
-    }
+    // for (const peer of knownPeers) {
+    //   this.connect(peer);
+    // }
 
-    if (isMaster) {
+    if (String(this.selfIP) === roomId.slice(0, -6)) {
       this.currentMasterIP = this.selfIP;
       this.currentMasterPort = this.selfPort;
       this.startMixer();
@@ -100,7 +100,7 @@ export class Room {
       MsgType.AUDIO_MIX,
       (srcIP, srcPort, dstIP, dstPort, type, payload) =>{
         if(srcIP!==this.currentMasterIP) return;
-        console.log("received",payload);
+        // console.log("received",payload);
         this.onMixAudioRecieve(payload);
         
       }
@@ -117,36 +117,70 @@ export class Room {
     );
 
   }
+  
+  addClient({ ip, port, name = "", photo = "" }) {
+    if (!ip||!this.messageHandler) return;
 
-  stop(){
+    const existing = this.peers.get(ip);
 
-      if(this.speaker!=null)
-       this.speaker.stop();
-       
-      if(this.microphone!=null)
-       this.microphone.stop();
+    if (existing) {
+      existing.port = port;
+      existing.name = name;
+      existing.photo = photo;
+      return;
+    }
 
-      if(this.encoder!=null)
-        this.encoder.stop();
-
-      if(this.decoder!=null)
-        this.decoder.stop();
-
-      if(this.micInterval)
-        clearInterval(this.micInterval);
-
-      for(const [ip,peer] of this.peers)
-        this.remove(peer.ip);
-
-      if(this.messageHandler){
-        this.messageHandler.removeMessageHandler(MsgType.CONNECT_REQUEST);
-        this.messageHandler.removeMessageHandler(MsgType.CONNECT_REPLY);
-        this.messageHandler.removeMessageHandler(MsgType.CAST_VOTE);
-        this.messageHandler.removeMessageHandler(MsgType.AUDIO_MIX);
-        this.messageHandler.removeMessageHandler(MsgType.CLIENT_AUDIO);
-      }
-
+    this.connect({ ip, port, name, photo });
   }
+
+
+  stop() {
+
+    if (this.speaker != null) {
+      this.speaker.stop();
+      this.speaker = null;
+      console.log("we destroyed speaker here");
+    }
+
+    if (this.microphone != null) {
+      this.microphone.stop();
+      this.microphone = null;
+    }
+
+    if (this.encoder != null) {
+      this.encoder.stop();
+      this.encoder = null;
+    }
+
+    if (this.decoder != null) {
+      this.decoder.stop();
+      this.decoder = null;
+    }
+
+    if (this.micInterval) {
+      clearInterval(this.micInterval);
+      this.micInterval = null;
+    }
+
+    for (const [ip, peer] of this.peers) {
+      this.remove(peer.ip);
+    }
+
+    if (this.peers) {
+      this.peers.clear();
+      this.peers = null;
+    }
+
+    if (this.messageHandler) {
+      this.messageHandler.removeMessageHandler(MsgType.CONNECT_REQUEST);
+      this.messageHandler.removeMessageHandler(MsgType.CONNECT_REPLY);
+      this.messageHandler.removeMessageHandler(MsgType.CAST_VOTE);
+      this.messageHandler.removeMessageHandler(MsgType.AUDIO_MIX);
+      this.messageHandler.removeMessageHandler(MsgType.CLIENT_AUDIO);
+      this.messageHandler = null;
+    }
+  }
+
   unmute(){
     this.muteMic=false;
   }

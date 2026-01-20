@@ -1,6 +1,7 @@
 "use client";
 
 import axios from "axios";
+import { AuthManager } from "./AuthManager.js";
 
 export class ImageManager {
   constructor() {
@@ -11,6 +12,7 @@ export class ImageManager {
     /* ------------ STATE ------------ */
     this.organisationName = null;
     this.privateIP = null;
+    this.db=null;
   }
 
   /* ------------ SETTERS ------------ */
@@ -20,84 +22,6 @@ export class ImageManager {
 
   setPrivateIP(ip) {
     this.privateIP = ip;
-  }
-
-  /* ------------ AUTH ------------ */
-  async renewToken() {
-    if (!this.organisationName) throw new Error("organisationName not set");
-    if (!this.privateIP) throw new Error("privateIP not set");
-
-    const resCustom = await axios.post("/api/token", {
-      organisationName: this.organisationName,
-      privateIP: this.privateIP
-    });
-
-    const customToken = resCustom.data.token;
-    const userId = resCustom.data.userId;
-
-    const resExchange = await axios.post(
-      `https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${this.apiKey}`,
-      {
-        token: customToken,
-        returnSecureToken: true,
-      }
-    );
-
-    const expiresInSec = Number(resExchange.data.expiresIn) || 3600;
-    const expiresIn = Date.now() + expiresInSec * 1000 - 2 * 60 * 1000;
-
-    return {
-      username: userId,
-      idToken: resExchange.data.idToken,
-      refreshToken: resExchange.data.refreshToken,
-      expiresIn,
-    };
-  }
-
-  async refreshToken() {
-    const stored = localStorage.getItem("imageCred");
-    const data = stored ? JSON.parse(stored) : null;
-    if (!data?.refreshToken) return null;
-
-    const params = new URLSearchParams();
-    params.append("grant_type", "refresh_token");
-    params.append("refresh_token", data.refreshToken);
-
-    const res = await axios.post(
-      `https://securetoken.googleapis.com/v1/token?key=${this.apiKey}`,
-      params,
-      { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
-    );
-
-    const expiresInSec = Number(res.data.expiresIn) || 3600;
-    const expiresIn = Date.now() + expiresInSec * 1000 - 2 * 60 * 1000;
-
-    return {
-      idToken: res.data.idToken,
-      refreshToken: res.data.refreshToken,
-      expiresIn,
-    };
-  }
-
-  async ensureAuth() {
-    let stored = localStorage.getItem("imageCred");
-    let cred = stored ? JSON.parse(stored) : null;
-
-    if (!cred?.idToken) {
-      cred = await this.renewToken();
-      localStorage.setItem("imageCred", JSON.stringify(cred));
-      return cred;
-    }
-
-    if (Date.now() >= cred.expiresIn) {
-      const refreshed = await this.refreshToken();
-      if (refreshed) {
-        cred = { ...cred, ...refreshed };
-        localStorage.setItem("imageCred", JSON.stringify(cred));
-      }
-    }
-
-    return cred;
   }
 
   /* ------------ IMAGE ID ------------ */
@@ -172,7 +96,12 @@ export class ImageManager {
 
     const { base64 } = compressed;
 
-    const cred = await this.ensureAuth();
+    const cred=await AuthManager.getAuthCred(
+      this.organisationName,
+      this.privateIP
+    );
+    console.log("here is your details",cred,Date.now());
+
     const imageId = this.generateImageId(cred.username);
 
     const url =
@@ -196,52 +125,104 @@ export class ImageManager {
         },
       }
     );
+    const cacheKey = `image_${imageId}`;
+    await this.#setToCache(cacheKey, base64, 24 * 60 * 60 * 1000); // 24h TTL
+
 
     return imageId;
   }
 
+  /* ------------ INDEXEDDB HELPERS ------------ */
+  async #getDB() {
+    if (this.db) return this.db;
+
+    this.db = await new Promise((resolve, reject) => {
+      const req = indexedDB.open("ImageCacheDB", 1);
+
+      req.onupgradeneeded = (event) => {
+        const db = event.target.result;
+        if (!db.objectStoreNames.contains("images")) {
+          db.createObjectStore("images", { keyPath: "key" });
+        }
+      };
+
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+
+    return this.db;
+  }
+
+  async #getFromCache(key) {
+    const db = await this.#getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction("images", "readonly");
+      const store = tx.objectStore("images");
+      const req = store.get(key);
+
+      req.onsuccess = () => {
+        const record = req.result;
+        if (!record) return resolve(null);
+        if (Date.now() > record.expiresAt) {
+          this.#removeFromCache(key);
+          return resolve(null);
+        }
+        resolve(record.data);
+      };
+
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async #setToCache(key, data, ttlMs = 24 * 60 * 60 * 1000) {
+    const db = await this.#getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction("images", "readwrite");
+      const store = tx.objectStore("images");
+      store.put({ key, data, expiresAt: Date.now() + ttlMs });
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  async #removeFromCache(key) {
+    const db = await this.#getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction("images", "readwrite");
+      const store = tx.objectStore("images");
+      const req = store.delete(key);
+      req.onsuccess = () => resolve(true);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+
   /* ------------ FETCH (ANY USER) ------------ */
   async getImage(imageId) {
-    if(!imageId)
-        return;
-    console.log(imageId);
+    if (!imageId) return;
     const { userId, version } = this.parseImageId(imageId);
     const cacheKey = `image_${imageId}`;
 
-    const cached = localStorage.getItem(cacheKey);
-    if (cached) {
-      const parsed = JSON.parse(cached);
-      if (Date.now() < parsed.expiresAt) {
-        return parsed.pic;
-      }
-    }
+    // 1️⃣ Try IndexedDB cache
+    const cached = await this.#getFromCache(cacheKey);
+    if (cached) return cached;
 
-    const cred = await this.ensureAuth();
-
+    // 2️⃣ Fetch from Firestore
+    const cred = await AuthManager.getAuthCred(this.organisationName, this.privateIP);
     const url =
       `https://firestore.googleapis.com/v1/projects/${this.projectId}` +
-      `/databases/(default)/documents/organisation/${this.organisationName}` +
-      `/images/${userId}`;
-
-    const res = await axios.get(url, {
-      headers: { Authorization: `Bearer ${cred.idToken}` },
-    });
+      `/databases/(default)/documents/organisation/${this.organisationName}/images/${userId}`;
+    const res = await axios.get(url, { headers: { Authorization: `Bearer ${cred.idToken}` } });
 
     const pic = res.data?.fields?.pic?.stringValue || null;
     const remoteImageId = res.data?.fields?.imageId?.stringValue;
 
-    if (!pic || !remoteImageId || remoteImageId.slice(-6) !== version) {
-      return null;
-    }
+    if (!pic || !remoteImageId || remoteImageId.slice(-6) !== version) return null;
 
-    localStorage.setItem(
-      cacheKey,
-      JSON.stringify({
-        pic,
-        expiresAt: Date.now() + 24 * 60 * 60 * 1000,
-      })
-    );
+    // 3️⃣ Save to IndexedDB with 24h TTL
+    await this.#setToCache(cacheKey, pic, 24 * 60 * 60 * 1000);
 
     return pic;
   }
+
 }

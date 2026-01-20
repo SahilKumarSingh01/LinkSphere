@@ -1,59 +1,39 @@
-// components/RoomCard.jsx
+"use client";
+
 import { FaPhone } from "react-icons/fa";
 import { IoSettings } from "react-icons/io5";
-import RoomUserCard from "./RoomUserCard";
-const RoomCard = () => {
+import { useRouter } from "next/navigation";
+import UserPhotoGrid from "./UserPhotoGrid"; // import your reusable component
 
+const height = 38;
+const width = 80;
 
-  const users=[
-    {name:"user1",profilePic:"/image/boy.jpg"},
-    {name:"user2",profilePic:"/image/girl.jpg"},
-    {name:"user2",profilePic:"/image/boy.jpg"},
-    {name:"user2",profilePic:"/image/boy.jpg"},
-    {name:"user2",profilePic:"/image/boy.jpg"},
-    {name:"user2",profilePic:"/image/boy.jpg"},
-    {name:"user2",profilePic:"/image/boy.jpg"},
-    // {name:"user2",profilePic:"/image/boy.jpg"},
-    // {name:"user2",profilePic:"/image/boy.jpg"},
-    // {name:"user2",profilePic:"/image/boy.jpg"},
-    // {name:"user2",profilePic:"/image/boy.jpg"},
-    // {name:"user2",profilePic:"/image/boy.jpg"},
-    // {name:"user2",profilePic:"/image/boy.jpg"},
-    // {name:"user2",profilePic:"/image/boy.jpg"},
-    // {name:"user2",profilePic:"/image/boy.jpg"},
-    
-   
-   
-  ]
+const RoomCard = ({ roomId, users, title }) => {
+  const router = useRouter();
+
   return (
-    <div className="bg-bg-secondary  w-100 h-95  text-text-primary rounded-xl p-6 items-center shadow-lg flex flex-col   border border-border-color space-y-4 ">
+    <div className="bg-bg-secondary text-text-primary rounded-xl p-6 shadow-lg flex flex-col space-y-4">
+      
       {/* Header */}
-      
-      <div className="w-full flex justify-between ">
-        <h3 className="text-sm text-text-secondary font-bold pl-1">group Name2</h3>
-        <div><IoSettings className="cursor-pointer text-react-icon"  size={20}/></div>
+      <div className="w-full flex justify-between">
+        <h3 className="text-sm text-text-secondary font-bold pl-1">
+          {title}
+        </h3>
+        <IoSettings className="cursor-pointer text-text-secondary" size={20} />
       </div>
 
-      {/* Avatar user Profile*/}
-      
-     <div className="flex flex-wrap  flex-row justify-center gap-3">
-        {users.map((user,idx) => (
-          <RoomUserCard
-            key={idx}
-            name={user.name}
-            profilePic={user.profilePic}
-            userCount={Math.ceil(users.length / 3)}
-          />
-        ))}
-      </div>
+      {/* Users */}
+      <UserPhotoGrid users={users} height={height} width={width} />
 
-
-      {/* Join button */}
-      <div className="mt-auto flex justify-end pb-2">
-        <button className="mt-2 cursor-pointer bg-btn-primary hover:bg-btn-secondary-hover text-text-primary text-sm px-4 py-2 rounded flex items-center space-x-2 transition">
-        <FaPhone className="cursor-pointer text-react-icon" size={16} />
-        <span>Join and talk now!</span>
-      </button>
+      {/* Join */}
+      <div className="mt-auto flex justify-center pb-2">
+        <button
+          className="mt-2 bg-bg-tertiary hover:bg-btn-secondary-hover text-text-primary text-sm px-4 py-2 rounded flex items-center space-x-2 transition"
+          onClick={() => router.push(`/room/${roomId}`)}
+        >
+          <FaPhone className="text-green-600" size={16} />
+          <span>Join and talk now!</span>
+        </button>
       </div>
     </div>
   );

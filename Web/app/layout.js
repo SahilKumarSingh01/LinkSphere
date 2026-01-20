@@ -2,7 +2,7 @@ import "@styles/global.css";
 import Navbar from "@components/Navbar";
 import { MessageHandlerProvider } from "@context/MessageHandler.jsx";
 import { PresenceManagerProvider } from "@context/PresenceManager.jsx";
-import { SidePanProvider } from "@context/SidePanContext.jsx";
+import { ImageManagerProvider } from "@context/ImageManager.jsx";
 
 export default function RootLayout({ children }) {
   return (
@@ -10,10 +10,10 @@ export default function RootLayout({ children }) {
       <body className="min-h-screen flex flex-col">
         <MessageHandlerProvider>
           <PresenceManagerProvider>
-            <SidePanProvider>
-            <Navbar />
-            {children}
-            </SidePanProvider>
+            <ImageManagerProvider>
+                <Navbar />
+                {children}
+            </ImageManagerProvider>
           </PresenceManagerProvider>
         </MessageHandlerProvider>
       </body>

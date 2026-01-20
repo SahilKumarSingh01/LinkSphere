@@ -61,7 +61,6 @@ export class Speaker {
   stop() {
     if (this.processor) this.processor.disconnect();
     if (this.audioCtx) this.audioCtx.close();
-    this.ringBuffer = null;
   }
 }
 

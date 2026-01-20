@@ -53,7 +53,6 @@ export class MessageChannel {
         }
         this.readLock = new Mutex();
         this.writeLock = new Mutex();
-        console.log(Mutex);
 
     }
 
