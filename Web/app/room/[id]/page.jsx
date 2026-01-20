@@ -114,11 +114,11 @@ export default function Room() {
       {/* Top Control Bar */}
       <div className="flex justify-center mt-4">
         <div className="bg-bg-secondary rounded-xl flex gap-3 px-4 py-2 shadow-lg">
-          <button className="relative group" onClick={onMuteStateChange}>
+          <button className="relative group " onClick={onMuteStateChange}>
             {isMicroPhoneMuted ? (
-              <BiMicrophoneOff size={26} />
+              <BiMicrophoneOff size={26} className="text-text-secondary" />
             ) : (
-              <PiMicrophoneBold size={26} />
+              <PiMicrophoneBold size={26} className="text-text-secondary"/>
             )}
           </button>
 

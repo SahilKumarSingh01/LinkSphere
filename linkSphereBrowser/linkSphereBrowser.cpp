@@ -15,6 +15,7 @@
 #include "MouseKeyboardControls.h"
 #include "getLocalIPs.h"
 #include "buildOfflinePage.h"
+#include "EnsureWebView2Runtime.h"
 //#include "ThreadPool.h"
 
 //ThreadPool g_pool(4); // or std::thread::hardware_concurrency(
@@ -77,6 +78,10 @@ void notifyNetworkEvent(const char* t) {
 
 
 int main() {
+    if (!EnsureWebView2Runtime()) {
+        MessageBox(NULL, L"Failed to install WebView2 Runtime. App will exit.", L"Error", MB_ICONERROR);
+        return -1;  //when runtime don't exist
+    }
     //std::cout<<std::thread::hardware_concurrency() << std::endl;;
     std::wstring url = L"http://localhost:3000/";
 

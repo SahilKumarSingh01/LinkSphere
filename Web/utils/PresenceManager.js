@@ -53,8 +53,6 @@ export class PresenceManager {
     }
   }
   
-  getLocalUsers(){return this.localUsers;}
-
   setOrganisation(name) { this.organisationName = name; }
 
   getOrganisation() { return this.organisationName; }

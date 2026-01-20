@@ -4,7 +4,8 @@ import { useState ,useEffect,useRef} from "react";
 import { useRouter } from "next/navigation";
 import { useMessageHandler } from "@context/MessageHandler.jsx";
 import { usePresenceManager } from "@context/PresenceManager";
-import { ImageManager } from "@utils/ImageManager";
+import { useImageManager } from "@context/ImageManager.jsx";
+
 import ImageCropper from "@components/ImageCropper";
 const MAX_LEN = 20;
 
@@ -19,7 +20,7 @@ export default function GetStartedPage() {
   const [editingOrg, setEditingOrg] = useState(false);
   const [photo, setPhoto] = useState(""); // empty → fallback avatar
   const [imageSrc,setImageSrc]=useState("");
-  const managerRef=useRef(new ImageManager());
+  const imageManager = useImageManager();
   const router = useRouter();
   const messageHandler=useMessageHandler();
   const {presenceManager}=usePresenceManager();
@@ -27,12 +28,12 @@ export default function GetStartedPage() {
   useEffect(()=>{
     if(messageHandler&&presenceManager){
       (async()=>{
-        managerRef.current.setPrivateIP(messageHandler.getDefaultIP());
+        imageManager.setPrivateIP(messageHandler.getDefaultIP());
         const data=await presenceManager.getMyPresence();
         setPhoto(data.userInfo?.photo||photo);
         setUserName(data.userInfo?.name||userName);
         setOrganisation(data.userInfo?.organisation||organisation);
-        managerRef.current.setOrganisation(data.userInfo?.organisation||organisation);
+        imageManager.setOrganisation(data.userInfo?.organisation||organisation);
         presenceManager.setOrganisation(data.userInfo?.organisation||organisation);
       }
       )()
@@ -41,16 +42,16 @@ export default function GetStartedPage() {
   useEffect(()=>{
     const fetchPhoto=async ()=>{
       if(photo){
-        setImageSrc(await managerRef.current.getImage(photo));
+        setImageSrc(await imageManager.getImage(photo));
       }
     }
     fetchPhoto();
   },[photo])
 
   const handleImageUpload=async ( file,croppedAreaPixels)=>{
-    if(managerRef.current){
+    if(imageManager){
       // console.log(file,croppedAreaPixels);
-      const photo=await managerRef.current.uploadImage(file,croppedAreaPixels);
+      const photo=await imageManager.uploadImage(file,croppedAreaPixels);
       presenceManager.updateMyPresence({photo});
       setPhoto(photo);
       setEditingPhoto(false);
@@ -66,7 +67,7 @@ export default function GetStartedPage() {
   
   const handleHopIn=async ()=>{
     router.push("/rooms");
-    await presenceManager.updateMyPresence({name:userName,photo});
+    await presenceManager.updateMyPresence({name:userName,photo,organisation});
     // await presenceManager.activate();
   } 
 
@@ -184,7 +185,7 @@ export default function GetStartedPage() {
                 <button
                 onClick={() =>
                     setOrganisation((organisation) => {
-                      managerRef.current.setOrganisation(organisation);
+                      imageManager.setOrganisation(organisation);
                       presenceManager.setOrganisation(organisation);  
                       presenceManager.updateMyPresence({organisation});                    
                       setEditingOrg(false);

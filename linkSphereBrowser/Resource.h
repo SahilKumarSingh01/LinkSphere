@@ -15,6 +15,7 @@
 #define IDC_MYICON				2
 #ifndef IDC_STATIC
 #define IDC_STATIC				-1
+#define IDR_WV2_INSTALLER		101
 #endif
 // Next default values for new objects
 //
