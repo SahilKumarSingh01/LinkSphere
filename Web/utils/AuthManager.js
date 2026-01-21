@@ -38,7 +38,6 @@ export class AuthManager {
 
     const expiresInSec = Number(resExchange.data.expiresIn) || 3600;
     const expiresIn = Date.now() + expiresInSec * 1000 - 2 * 60 * 1000;
-    console.log("renew token",resExchange);
     return {
       username,
       idToken: resExchange.data.idToken,
@@ -84,7 +83,6 @@ export class AuthManager {
 
     if (Date.now() >= cred.expiresIn) {
       const refreshed = await this.#refreshToken(cred.refreshToken);
-      console.log("refreshed",refreshed);
       if (refreshed) {
         cred = { ...cred, ...refreshed };
         this.#setCred(cred);

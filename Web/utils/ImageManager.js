@@ -26,16 +26,22 @@ export class ImageManager {
 
   /* ------------ IMAGE ID ------------ */
   generateImageId(userId) {
+    if (!this.organisationName) {
+      throw new Error("Organisation is not set");
+    }
     const ts = Date.now().toString().slice(-6);
-    return `${userId}${ts}`;
+    return `${this.organisationName}_${userId}${ts}`;
   }
 
   parseImageId(imageId) {
+    const [org, rest] = imageId.split("_");
     return {
-      userId: imageId.slice(0, -6),
-      version: imageId.slice(-6),
+      organisation: org,
+      userId: rest.slice(0, -6),
+      version: rest.slice(-6),
     };
   }
+
 
   /* ------------ IMAGE COMPRESS ------------ */
   async imageCompresser(file, croppedAreaPixels) {
@@ -100,7 +106,6 @@ export class ImageManager {
       this.organisationName,
       this.privateIP
     );
-    console.log("here is your details",cred,Date.now());
 
     const imageId = this.generateImageId(cred.username);
 
@@ -200,18 +205,16 @@ export class ImageManager {
   /* ------------ FETCH (ANY USER) ------------ */
   async getImage(imageId) {
     if (!imageId) return;
-    const { userId, version } = this.parseImageId(imageId);
+    const { userId, version ,organisation} = this.parseImageId(imageId);
     const cacheKey = `image_${imageId}`;
 
-    // 1️⃣ Try IndexedDB cache
     const cached = await this.#getFromCache(cacheKey);
     if (cached) return cached;
 
-    // 2️⃣ Fetch from Firestore
     const cred = await AuthManager.getAuthCred(this.organisationName, this.privateIP);
     const url =
       `https://firestore.googleapis.com/v1/projects/${this.projectId}` +
-      `/databases/(default)/documents/organisation/${this.organisationName}/images/${userId}`;
+      `/databases/(default)/documents/organisation/${organisation}/images/${userId}`;
     const res = await axios.get(url, { headers: { Authorization: `Bearer ${cred.idToken}` } });
 
     const pic = res.data?.fields?.pic?.stringValue || null;
@@ -219,7 +222,6 @@ export class ImageManager {
 
     if (!pic || !remoteImageId || remoteImageId.slice(-6) !== version) return null;
 
-    // 3️⃣ Save to IndexedDB with 24h TTL
     await this.#setToCache(cacheKey, pic, 24 * 60 * 60 * 1000);
 
     return pic;

@@ -1,37 +1,58 @@
 // audio.js (8 kHz mic + speaker using RingBuffer)
 import { RingBuffer } from './RingBuffer.js';
-
 export class Microphone {
   constructor(stream, bufferSize = 96000) {
     if (!stream) throw new Error("Microphone requires a MediaStream.");
 
     this.stream = stream;
     this.ringBuffer = new RingBuffer(bufferSize);
-
-    this.audioCtx = new (window.AudioContext)({ sampleRate: 48000 });
+    this.audioCtx = new AudioContext({ sampleRate: 48000 });
     this.source = this.audioCtx.createMediaStreamSource(this.stream);
 
-    this.processor = this.audioCtx.createScriptProcessor(512, 1, 1);
-    this.source.connect(this.processor);
-    this.processor.connect(this.audioCtx.destination);
+    const microphoneWorklet = `
+      class MicrophoneProcessor extends AudioWorkletProcessor {
+        process(inputs) {
+          const input = inputs[0];
+          if (input && input[0]) {
+            this.port.postMessage(input[0]);
+          }
+          return true;
+        }
+      }
+      registerProcessor("microphone-processor", MicrophoneProcessor);
+    `;
 
-    this.processor.onaudioprocess = (e) => {
-      const input = e.inputBuffer.getChannelData(0);
-      this.ringBuffer.writeSamples(input);
-    };
+    const blob = new Blob([microphoneWorklet], { type: "application/javascript" });
+    const url = URL.createObjectURL(blob);
+
+    this.ready = this.audioCtx.audioWorklet
+      .addModule(url)
+      .then(() => {
+        this.worklet = new AudioWorkletNode(this.audioCtx, "microphone-processor", {
+          numberOfInputs: 1,
+          numberOfOutputs: 0,
+          channelCount: 1
+        });
+
+        this.worklet.port.onmessage = (e) => {
+          this.ringBuffer.writeSamples(e.data);
+        };
+
+        this.source.connect(this.worklet);
+      });
   }
 
   readSamples(outputBuffer) {
     return this.ringBuffer.readSamples(outputBuffer);
   }
 
-  availableToRead(){
+  availableToRead() {
     return this.ringBuffer.availableToRead();
   }
 
   stop() {
-    if (this.processor) this.processor.disconnect();
     if (this.source) this.source.disconnect();
+    if (this.worklet) this.worklet.disconnect();
     if (this.audioCtx) this.audioCtx.close();
     if (this.stream) this.stream.getTracks().forEach(t => t.stop());
   }
@@ -40,26 +61,54 @@ export class Microphone {
 export class Speaker {
   constructor(bufferSize = 96000) {
     this.ringBuffer = new RingBuffer(bufferSize);
-    this.audioCtx = new (window.AudioContext)({ sampleRate: 48000 });
-    this.processor = this.audioCtx.createScriptProcessor(512, 1, 1);
+    this.audioCtx = new AudioContext({ sampleRate: 48000 });
 
-    this.processor.onaudioprocess = (e) => {
-      const output = e.outputBuffer.getChannelData(0);
-      const read = this.ringBuffer.readSamples(output);
-      if (read < output.length){
-        console.warn(`Speaker underflow: needed ${output.length}, got ${read}`);
-        output.fill(0, read); // fill rest with silence
+    const speakerWorklet = `
+      class SpeakerProcessor extends AudioWorkletProcessor {
+        constructor() {
+          super();
+          this.buffer = [];
+          this.port.onmessage = (e) => this.buffer.push(...e.data);
+        }
+
+        process(_, outputs) {
+          const output = outputs[0][0];
+          let i = 0;
+          while (i < output.length && this.buffer.length > 0) {
+            output[i++] = this.buffer.shift();
+          }
+          if (i < output.length) output.fill(0, i);
+          return true;
+        }
       }
-    };
-    this.processor.connect(this.audioCtx.destination);
+      registerProcessor("speaker-processor", SpeakerProcessor);
+    `;
+
+    const blob = new Blob([speakerWorklet], { type: "application/javascript" });
+    const url = URL.createObjectURL(blob);
+
+    this.ready = this.audioCtx.audioWorklet
+      .addModule(url)
+      .then(() => {
+        this.worklet = new AudioWorkletNode(this.audioCtx, "speaker-processor", {
+          numberOfInputs: 0,
+          numberOfOutputs: 1,
+          channelCount: 1
+        });
+        this.worklet.connect(this.audioCtx.destination);
+      });
   }
 
   writeSamples(samples) {
-    return this.ringBuffer.writeSamples(samples);
+    const written = this.ringBuffer.writeSamples(samples);
+    const temp = new Float32Array(samples.length);
+    this.ringBuffer.readSamples(temp);
+    if (this.worklet) this.worklet.port.postMessage(temp);
+    return written;
   }
 
   stop() {
-    if (this.processor) this.processor.disconnect();
+    if (this.worklet) this.worklet.disconnect();
     if (this.audioCtx) this.audioCtx.close();
   }
 }

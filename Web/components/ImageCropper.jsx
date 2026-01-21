@@ -70,16 +70,10 @@ export default function ImageCropper({
             <button
               onClick={() => onUpload(file,croppedAreaPixels)}
               disabled={!imageSrc}
-              className={`
-                flex-1 py-2 rounded
-                text-text-primary
-                transition
-                ${
-                  imageSrc
-                    ? "bg-btn-primary hover:bg-btn-primary-hover active:bg-btn-primary-active cursor-pointer"
-                    : "bg-btn-disabled text-btn-disabled-text cursor-not-allowed"
-                }
-              `}
+              className={
+                imageSrc? "flex-1 py-2 rounded text-text-primary transition bg-btn-primary hover:bg-btn-primary-hover active:bg-btn-primary-active cursor-pointer"
+                        : "flex-1 py-2 rounded text-text-primary transition bg-btn-disabled text-btn-disabled-text cursor-not-allowed"
+              }
             >
               Upload
             </button>

@@ -417,7 +417,7 @@ export class Room {
           MsgType.AUDIO_MIX,
           mixedAudio
         )
-        console.log("audio send",mixedAudio);
+        // console.log("audio send",mixedAudio);
       })
 
       
@@ -434,47 +434,64 @@ export class Room {
   }
 
   ///// Election Part
-
-  async startElection(){
-
-    this.currentMasterIP=null;
-    this.currentMasterPort=null;
-    this.vote.clear();
-    while(this.currentMasterIP===null){
-
-      this.vote.clear();
-
-      for (const [ip,peer] of this.peers) 
-        this.connect(peer);
-
-      await new Promise((resolve,reject)=>{
-        setTimeout(()=>{resolve();},200)
-      })
-
-      let ip=this.selfIP;
-
-      for(const [_,peer] of this.peers){
-          if(peer.status===PeerStatus.CONNECTED)  
-            ip = ip > peer.ip ? ip : peer.ip;
-      }
-
-      const candidate=(ip===this.selfIP?{
-            ip: this.selfIP,
-            port: this.selfPort,
-            name: this.name ?? "",
-            photo: this.photo ?? "",
+async startElection() {
+  console.log("🔹 Starting election process...");
   
-      }:this.peers.get(ip));
+  this.currentMasterIP = null;
+  this.currentMasterPort = null;
+  this.vote.clear();
 
-      const payload= new TextEncoder().encode(JSON.stringify({}));
+  while (this.currentMasterIP === null) {
+    console.log("🔸 New election round started.");
+    this.vote.clear();
 
-      this.messageHandler.sendMessage(0,candidate.ip,candidate.port,MsgType.CAST_VOTE,payload);    
-
-      await new Promise((resolve,reject)=>{
-        setTimeout(()=>{resolve();},200)
-      })
+    for (const [ip, peer] of this.peers) {
+      console.log(`🔹 Connecting to peer: ${ip}`);
+      this.connect(peer);
     }
+
+    console.log("⏳ Waiting 200ms for connections to stabilize...");
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    let ip = this.selfIP;
+    console.log(`🔹 Starting candidate selection. Initial candidate IP: ${ip}`);
+
+    for (const [_, peer] of this.peers) {
+      if (peer.status === PeerStatus.CONNECTED) {
+        console.log(`🔹 Peer connected: ${peer.ip}. Comparing IPs...`);
+        ip = ip > peer.ip ? ip : peer.ip;
+        console.log(`🔹 Current highest IP candidate: ${ip}`);
+      } else {
+        console.log(`⚠️ Peer not connected: ${peer.ip}`);
+      }
+    }
+
+    const candidate = (ip === this.selfIP
+      ? {
+          ip: this.selfIP,
+          port: this.selfPort,
+          name: this.name ?? "",
+          photo: this.photo ?? "",
+        }
+      : this.peers.get(ip)
+    );
+
+    console.log("🔹 Selected candidate for this round:", candidate);
+
+    const payload = new TextEncoder().encode(JSON.stringify({}));
+    console.log(`🔹 Sending vote to candidate ${candidate.ip}:${candidate.port}`);
+
+    this.messageHandler.sendMessage(0, candidate.ip, candidate.port, MsgType.CAST_VOTE, payload);
+
+    console.log("⏳ Waiting 200ms for votes to be cast...");
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    console.log("🔹 End of election round. Current master IP:", this.currentMasterIP);
   }
+
+  console.log("✅ Election complete! Master elected:", this.currentMasterIP, this.currentMasterPort);
+}
+
   
   async onVote(srcIP, srcPort, dstIP, dstPort, type, payload){
 

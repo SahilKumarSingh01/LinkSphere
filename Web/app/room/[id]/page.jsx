@@ -4,6 +4,7 @@ import { PiMicrophoneBold } from "react-icons/pi";
 import { BiMicrophoneOff } from "react-icons/bi";
 import { IoCallSharp } from "react-icons/io5";
 import { BsFillPersonLinesFill } from "react-icons/bs";
+import { useSearchParams } from "next/navigation";
 
 import UserPhotoGrid from "@components/UserPhotoGrid";
 import SidePan from "@components/SidePan.jsx";
@@ -26,8 +27,8 @@ export default function Room() {
   const messageHandler = useMessageHandler();
   const router = useRouter();
   const { id } = useParams();
-
-  const roomTitle = users[0]?.userInfo?.roomTitle || "Untitled Room";
+  const searchParams = useSearchParams();
+  const roomTitle =searchParams.get("title")||"Untitled Room";
 
   /* ---------- CREATE & DESTROY ROOM INSTANCE ---------- */
   useEffect(() => {
@@ -43,12 +44,12 @@ export default function Room() {
   useEffect(() => {
     if (!presenceManager || !messageHandler || !roomInstance) return;
 
-    presenceManager.activate();
-
     (async () => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         const user = presenceManager.getMyPresence();
+        await presenceManager.activate();
+        presenceManager?.updateMyPresence({ roomId: id, roomTitle: roomTitle });
 
         roomInstance.init(
           messageHandler,
@@ -69,6 +70,7 @@ export default function Room() {
       allUsers?.filter(u => u.userInfo?.roomId === id) || [];
 
     setUsers(filteredUsers);
+    // console.log("filter users",filteredUsers);
 
     filteredUsers.forEach(user => {
       roomInstance?.addClient({
@@ -87,7 +89,7 @@ export default function Room() {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         roomInstance?.refreshAudio(stream);
       } catch (e) {
-        console.log(e);
+        console.error(e);
       }
     };
 

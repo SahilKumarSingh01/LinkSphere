@@ -140,13 +140,11 @@ export default function GetStartedPage() {
                 </div>
 
                 <button
-                  onClick={() =>
-                    setUserName((curName) => {
-                      if(!curName.length)return "";
-                      presenceManager.updateMyPresence({name:curName});
+                  onClick={() =>{
+                      if(!userName.length)return "";
+                      presenceManager.updateMyPresence({name:userName});
                       setEditingName(false);
-                      return curName; // keep state unchanged
-                    })
+                  }
                   }
                   className="px-3 py-2 bg-btn-primary text-white rounded-lg hover:bg-btn-primary-hover transition"
                 >
@@ -183,14 +181,12 @@ export default function GetStartedPage() {
                   ))}
                 </select>
                 <button
-                onClick={() =>
-                    setOrganisation((organisation) => {
-                      imageManager.setOrganisation(organisation);
-                      presenceManager.setOrganisation(organisation);  
-                      presenceManager.updateMyPresence({organisation});                    
-                      setEditingOrg(false);
-                      return organisation; // keep state unchanged
-                    })}
+                onClick={() =>{
+                  setEditingOrg(false);
+                  imageManager.setOrganisation(organisation);
+                  presenceManager.setOrganisation(organisation);  
+                  presenceManager.updateMyPresence({organisation});  
+                }}
                     className="px-3 py-2 bg-btn-primary text-white rounded-lg hover:bg-btn-primary-hover transition"
                 >
                   Save
@@ -214,7 +210,12 @@ export default function GetStartedPage() {
         <div className="mt-8 flex justify-center w-full">
           <button
             onClick={handleHopIn}
-            className="px-8 py-3 bg-btn-primary text-white rounded-lg font-semibold hover:bg-btn-primary-hover transition"
+            disabled={editingOrg || editingName || editingPhoto}
+            className={
+              editingOrg || editingName || editingPhoto
+                ? "px-8 py-3 bg-btn-disabled text-btn-disabled-text rounded-lg font-semibold cursor-not-allowed"
+                : "px-8 py-3 bg-btn-primary text-white rounded-lg font-semibold hover:bg-btn-primary-hover transition"
+            }
           >
             Hop In
           </button>

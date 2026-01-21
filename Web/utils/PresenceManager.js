@@ -21,6 +21,7 @@ export class PresenceManager {
     this.accUpdates=[];// it will be json nothing else
     this.messageHandler.setOnMessageReceive(MsgType.DISCOVERY,this.onDiscoveryMessage.bind(this));
     this.periodUpdateTimer=null;
+    this.updateTimerInterval=1;
     this.onUserUpdate=null;
     this.activated=false;
     this.removeInactiveTimer = null;
@@ -32,7 +33,7 @@ export class PresenceManager {
         return;
     await this.pushMyPresence();
     await this.fetchAllUsers();
-    this.periodUpdateTimer= setInterval(this.sendPeriodicUpdate.bind(this), 10*1000);
+    this.periodUpdateTimer= setInterval(this.sendPeriodicUpdate.bind(this), this.updateTimerInterval*1000);
     this.removeInactiveTimer = setInterval(this.removeInactive.bind(this), 60 * 1000); // run every 1 minute
 
   }
@@ -49,7 +50,7 @@ export class PresenceManager {
     }
 
     if (removed && this.onUserUpdate) {
-        setTimeout(() => this.onUserUpdate([...this.localUsers.values()]), 0);
+        this.onUserUpdate([...this.localUsers.values()]);
     }
   }
   
@@ -105,7 +106,7 @@ export class PresenceManager {
     localStorage.setItem("myPresence", JSON.stringify(data));
     this.localUsers.set(data.privateIP,data);
     if(this.onUserUpdate)
-      setTimeout(this.onUserUpdate([...this.localUsers.values()]),0);
+      this.onUserUpdate([...this.localUsers.values()]);
   }
 
   async pushMyPresence(){
@@ -148,7 +149,7 @@ export class PresenceManager {
   
   getMyPresence() {
     let stored = localStorage.getItem("myPresence");
-    let data = stored ? JSON.parse(stored) : null;
+    let data = stored ? JSON.parse(stored) : {...this.getDefaultPresence(),userInfo:{}};
     return data;
 
   }
@@ -186,7 +187,7 @@ export class PresenceManager {
       }
     }
     if(this.onUserUpdate)
-      setTimeout(this.onUserUpdate([...this.localUsers.values()]),0);
+      this.onUserUpdate([...this.localUsers.values()]);
     return [...this.localUsers.values()];
 
   }
@@ -194,7 +195,6 @@ export class PresenceManager {
 
   /* ---------------- NETWORK / GOSSIP ---------------- */
   async sendPeriodicUpdate() {
-    // if (!this.MyDiscCred?.username) return;
   
     const now = Date.now();
     const myUpdate = await this.getMyPresence();
@@ -206,11 +206,8 @@ export class PresenceManager {
 
     const peers = [...this.localUsers.keys()];//.filter(ip => ip !== this.privateIP); //remove this comment 
     const targets = this.pickRandom(peers, 3);
-
-    // const payload = JSON.stringify(this.accUpdates);
     const jsonStr = JSON.stringify(this.accUpdates);
-    const payload = pako.deflate(jsonStr); // ✅ Uint8Array
-    // console.log("here you see reduction ",jsonStr,jsonStr.length,payload.length);
+    const payload = pako.deflate(jsonStr); 
 
     targets.forEach(t => {
       this.messageHandler.sendMessage(
@@ -227,8 +224,6 @@ export class PresenceManager {
 
 
   onDiscoveryMessage(srcIP,srcPort,dstIP,dstPort,type, payload) {
-    // const decoded = new TextDecoder().decode(payload);
-    // const updates = JSON.parse(decoded);
     const decompressedStr = pako.inflate(payload, { to: "string" });
     const updates = JSON.parse(decompressedStr);
 
@@ -242,18 +237,38 @@ export class PresenceManager {
       }
       
     });
+
+    const now = Date.now();
+    const ONE_MIN = 60 * 1000;
+
+    let activeUserCount = 0;
+    this.localUsers.forEach(user => {
+      if (now - user.lastSeen <= ONE_MIN) {
+        activeUserCount++;
+      }
+    });
+
+    const a=Math.min(10,Math.max(activeUserCount,this.updateTimerInterval));
+    if(a!=this.updateTimerInterval){
+      clearInterval(this.periodUpdateTimer);
+      this.updateTimerInterval=a;
+      this.periodUpdateTimer= setInterval(this.sendPeriodicUpdate.bind(this), this.updateTimerInterval*1000);
+    }
+    
     if(this.onUserUpdate)
-      setTimeout(this.onUserUpdate([...this.localUsers.values()]),0);
+      this.onUserUpdate([...this.localUsers.values()]);
   }
 
   /* ---------------- HELPERS ---------------- */
   pickRandom(arr, n) {
-    const copy = [...arr];
-    const out = [];
-    while (out.length < n && copy.length) {
-      out.push(copy.splice(Math.floor(Math.random() * copy.length), 1)[0]);
+    const out = [], len = arr.length;
+    for (let i = 0; i < n && i < len; i++) {
+      const r = Math.floor(Math.random() * (len - i)) + i;
+      const val = arr[r];
+      arr[r] = arr[i];
+      arr[i] = val;
+      out.push(arr[i]);
     }
     return out;
   }
-
 }

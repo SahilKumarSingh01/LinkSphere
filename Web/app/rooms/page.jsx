@@ -65,9 +65,8 @@ export default function Page() {
   /* ---------------- CREATE ROOM ---------------- */
   const handleRoomCreate = (roomTitle) => {
     const ts = Date.now().toString().slice(-6);
-    const roomId = `${messageHandler.getDefaultIP()}_${ts}`;
-    presenceManager.updateMyPresence({ roomId, roomTitle });
-    router.push(`/room/${roomId}`);
+    const roomId = `${messageHandler.getDefaultIP()}${ts}`;
+    router.push(`/room/${roomId}?title=${encodeURIComponent(roomTitle)}`);
   };
 
   return (
