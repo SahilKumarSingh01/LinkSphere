@@ -1,136 +1,121 @@
 // audio.js (8 kHz mic + speaker using RingBuffer)
 import { RingBuffer } from './RingBuffer.js';
+import { AtomicInt } from './AtomicInt.js';
+
 export class Microphone {
   constructor(stream, bufferSize = 96000) {
     if (!stream) throw new Error("Microphone requires a MediaStream.");
 
     this.stream = stream;
     this.ringBuffer = new RingBuffer(bufferSize);
-    this.audioCtx = new AudioContext({ sampleRate: 48000 });
+
+    this.audioCtx = new (window.AudioContext)({ sampleRate: 48000 });
     this.source = this.audioCtx.createMediaStreamSource(this.stream);
 
-    const microphoneWorklet = `
-      class MicrophoneProcessor extends AudioWorkletProcessor {
-        process(inputs) {
-          const input = inputs[0];
-          if (input && input[0]) {
-            this.port.postMessage(input[0]);
-          }
-          return true;
-        }
-      }
-      registerProcessor("microphone-processor", MicrophoneProcessor);
-    `;
+    this.processor = this.audioCtx.createScriptProcessor(512, 1, 1);
+    this.source.connect(this.processor);
+    this.processor.connect(this.audioCtx.destination);
 
-    const blob = new Blob([microphoneWorklet], { type: "application/javascript" });
-    const url = URL.createObjectURL(blob);
-
-    this.ready = this.audioCtx.audioWorklet
-      .addModule(url)
-      .then(() => {
-        this.worklet = new AudioWorkletNode(this.audioCtx, "microphone-processor", {
-          numberOfInputs: 1,
-          numberOfOutputs: 0,
-          channelCount: 1
-        });
-
-        this.worklet.port.onmessage = (e) => {
-          this.ringBuffer.writeSamples(e.data);
-        };
-
-        this.source.connect(this.worklet);
-      });
+    this.processor.onaudioprocess = (e) => {
+      const input = e.inputBuffer.getChannelData(0);
+      this.ringBuffer.writeSamples(input);
+    };
   }
 
   readSamples(outputBuffer) {
     return this.ringBuffer.readSamples(outputBuffer);
   }
 
-  availableToRead() {
+  availableToRead(){
     return this.ringBuffer.availableToRead();
   }
 
   stop() {
+    if (this.processor) this.processor.disconnect();
     if (this.source) this.source.disconnect();
-    if (this.worklet) this.worklet.disconnect();
+
     if (this.audioCtx) this.audioCtx.close();
     if (this.stream) this.stream.getTracks().forEach(t => t.stop());
   }
 }
-
 export class Speaker {
   constructor(bufferSize = 96000) {
     this.ringBuffer = new RingBuffer(bufferSize);
-    this.audioCtx = new AudioContext({ sampleRate: 48000 });
-
-    const speakerWorklet = `
-      class SpeakerProcessor extends AudioWorkletProcessor {
-        constructor() {
-          super();
-          this.buffer = [];
-          this.port.onmessage = (e) => this.buffer.push(...e.data);
-        }
-
-        process(_, outputs) {
-          const output = outputs[0][0];
-          let i = 0;
-          while (i < output.length && this.buffer.length > 0) {
-            output[i++] = this.buffer.shift();
-          }
-          if (i < output.length) output.fill(0, i);
-          return true;
-        }
+    this.audioCtx = new (window.AudioContext)({ sampleRate: 48000 });
+    this.processor = this.audioCtx.createScriptProcessor(512, 1, 1);
+    this.debt=new AtomicInt(0);
+    this.processor.onaudioprocess = (e) => {
+      const output = e.outputBuffer.getChannelData(0);
+      const read = this.ringBuffer.readSamples(output);
+      if (read < output.length){
+        this.debt.update(output.length-read);
+        console.warn(`Speaker underflow: needed ${output.length}, got ${read}`);
+        output.fill(0, read); // fill rest with silence
       }
-      registerProcessor("speaker-processor", SpeakerProcessor);
-    `;
-
-    const blob = new Blob([speakerWorklet], { type: "application/javascript" });
-    const url = URL.createObjectURL(blob);
-
-    this.ready = this.audioCtx.audioWorklet
-      .addModule(url)
-      .then(() => {
-        this.worklet = new AudioWorkletNode(this.audioCtx, "speaker-processor", {
-          numberOfInputs: 0,
-          numberOfOutputs: 1,
-          channelCount: 1
-        });
-        this.worklet.connect(this.audioCtx.destination);
-      });
+    };
+    this.processor.connect(this.audioCtx.destination);
   }
 
   writeSamples(samples) {
-    const written = this.ringBuffer.writeSamples(samples);
-    const temp = new Float32Array(samples.length);
-    this.ringBuffer.readSamples(temp);
-    if (this.worklet) this.worklet.port.postMessage(temp);
-    return written;
+    const debt = this.debt.get();
+
+    if (debt > 0) {
+      const consume = Math.min(debt, samples.length);
+      this.debt.update(-2*consume);
+      // console.log("how are you ",debt,consume);
+      return this.ringBuffer.writeSamples(samples.subarray(consume));
+    }
+
+    return this.ringBuffer.writeSamples(samples);
+  }
+
+  getDebt()
+  {
+      return this.debt.get();
+  }
+
+  updateDebt(delta)
+  {
+      this.debt.update(delta);
   }
 
   stop() {
-    if (this.worklet) this.worklet.disconnect();
+    if (this.processor) this.processor.disconnect();
     if (this.audioCtx) this.audioCtx.close();
   }
 }
 
 export class OpusEncoder {
-  constructor() {
-    this.encoder = new AudioEncoder({
-      output: (chunk) => {
-        const p = new Uint8Array(chunk.byteLength);
-        chunk.copyTo(p);
+    constructor() {
+      this.HEADER_SIZE = 13;
+      this.MAX_PAYLOAD = 4096;
 
-        const b = new ArrayBuffer(13 + p.length);
-        const v = new DataView(b);
-        v.setUint8(0, chunk.type === "key" ? 0 : 1);
-        v.setBigUint64(1, BigInt(chunk.timestamp));
-        v.setUint32(9, chunk.duration || 0);
-        new Uint8Array(b, 13).set(p);
+      // One-time allocations
+      this.buffer = new ArrayBuffer(this.HEADER_SIZE + this.MAX_PAYLOAD);
+      this.view = new DataView(this.buffer);
+      this.bytes = new Uint8Array(this.buffer);
 
-        this.onDataCb?.(new Uint8Array(b));
-      },
-      error: console.error
-    });
+      this.encoder = new AudioEncoder({
+        output: (chunk) => {
+          const payloadLen = chunk.byteLength;
+          if (payloadLen > this.MAX_PAYLOAD) return;
+
+          // Copy payload directly after header
+          chunk.copyTo(this.bytes.subarray(this.HEADER_SIZE));
+
+          // Header
+          this.view.setUint8(0, chunk.type === "key" ? 0 : 1);
+          this.view.setBigUint64(1, BigInt(chunk.timestamp));
+          this.view.setUint32(9, chunk.duration || 0);
+
+          // Pass ONLY the valid slice (view, not copy)
+          this.onDataCb?.(
+            this.bytes.subarray(0, this.HEADER_SIZE + payloadLen)
+          );
+        },
+        error: console.error
+      });
+
 
     this.encoder.configure({
       codec: "opus",
@@ -173,11 +158,12 @@ export class OpusEncoder {
 
 export class OpusDecoder {
   constructor() {
+    this.buffer=new Float32Array(960);
     this.decoder = new AudioDecoder({
       output: (audioData) => {
-        const pcm = new Float32Array(audioData.numberOfFrames);
-        audioData.copyTo(pcm, { planeIndex: 0 });
-        this.onPcmCb?.(pcm);
+        // console.log(audioData);
+        audioData.copyTo(this.buffer, { planeIndex: 0 });
+        this.onPcmCb?.(this.buffer);
       },
       error: console.error
     });

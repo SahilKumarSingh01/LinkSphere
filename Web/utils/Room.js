@@ -1,6 +1,9 @@
 import { RingBuffer } from "./RingBuffer.js";
 import { MsgType } from "@utils/MessageTypes";
 import { Microphone, Speaker, OpusDecoder, OpusEncoder } from "@utils/audio";
+import { Mutex } from "@utils/Mutex.js"; 
+import { AtomicInt } from "./AtomicInt.js";
+
 
 export const PeerStatus = Object.freeze({
   CONNECTED: "connected",
@@ -52,11 +55,20 @@ export class Room {
     this.micInterval=null;
     this.masterTimeout=null;
     this.mixerInterval=null;
-    this.muteMic=false;
+    this.muteMic=false;   
+
+    this.running=null;
+    this.exLock = new Mutex();
+
 
   }
 
-  init(messageHandler,stream,roomId,name="",photo="") {//this can't be made async 
+  async init(messageHandler,stream,roomId,name="",photo="") {//this can't be made async 
+    await this.exLock.lock();
+    if(this.running===false){
+      this.exLock.unlock();
+      return;
+    }
     this.name=name;
     this.photo=photo;
     this.messageHandler = messageHandler;
@@ -69,16 +81,13 @@ export class Room {
     this.speaker=new Speaker();
     this.microphone=new Microphone(stream);
 
-    // for (const peer of knownPeers) {
-    //   this.connect(peer);
-    // }
+    this.masterTimeout=setTimeout(()=>{
+      this.startElection();
+      console.log("master election is called");
+    },100);
+    console.log("master is set");
 
-    if (String(this.selfIP) === roomId.slice(0, -6)) {
-      this.currentMasterIP = this.selfIP;
-      this.currentMasterPort = this.selfPort;
-      this.startMixer();
-    }
-
+    
     this.messageHandler.setOnMessageReceive(
       MsgType.CONNECT_REQUEST,
       (srcIP, srcPort, dstIP, dstPort, type, payload) =>
@@ -111,15 +120,21 @@ export class Room {
       (srcIP, srcPort, dstIP, dstPort, type, payload) =>{
         if(this.currentMasterIP!==this.selfIP)
           return;
+        const mixInfo=this.mixerBuffer.get(srcIP);
 
-        this.mixerBuffer.get(srcIP).decoder.writePacket(payload);
+        if(mixInfo.debt.get()>0)
+           mixInfo.debt.update(-2*960);
+        else
+          mixInfo.decoder.writePacket(payload);
       }
     );
-
+    this.running=true;
+    this.exLock.unlock();
+    console.log("init is called ....");
   }
   
   addClient({ ip, port, name = "", photo = "" }) {
-    if (!ip||!this.messageHandler) return;
+    if (!ip||!this.messageHandler||!this.running) return;
 
     const existing = this.peers.get(ip);
 
@@ -134,42 +149,28 @@ export class Room {
   }
 
 
-  stop() {
+  async stop() {
+    await this.exLock.lock();
+    if(this.running!==true){
+        this.running=false;
+        this.exLock.unlock();
+        return;
+    }
 
+
+    await new Promise((resolve)=>setTimeout(resolve,1000));
     if (this.speaker != null) {
       this.speaker.stop();
-      this.speaker = null;
       console.log("we destroyed speaker here");
     }
 
-    if (this.microphone != null) {
-      this.microphone.stop();
-      this.microphone = null;
-    }
-
-    if (this.encoder != null) {
-      this.encoder.stop();
-      this.encoder = null;
-    }
-
-    if (this.decoder != null) {
-      this.decoder.stop();
-      this.decoder = null;
-    }
-
-    if (this.micInterval) {
+    if(this.micInterval)
       clearInterval(this.micInterval);
-      this.micInterval = null;
-    }
+    if(this.mixerInterval)
+      clearInterval(this.mixerInterval);
 
-    for (const [ip, peer] of this.peers) {
-      this.remove(peer.ip);
-    }
-
-    if (this.peers) {
-      this.peers.clear();
-      this.peers = null;
-    }
+    if (this.microphone != null) 
+      this.microphone.stop();
 
     if (this.messageHandler) {
       this.messageHandler.removeMessageHandler(MsgType.CONNECT_REQUEST);
@@ -177,8 +178,44 @@ export class Room {
       this.messageHandler.removeMessageHandler(MsgType.CAST_VOTE);
       this.messageHandler.removeMessageHandler(MsgType.AUDIO_MIX);
       this.messageHandler.removeMessageHandler(MsgType.CLIENT_AUDIO);
-      this.messageHandler = null;
     }
+
+    if(this.masterTimeout) {
+      clearTimeout(this.masterTimeout);
+      console.log("master is removed");
+    }
+
+    if (this.encoder != null)
+      await this.encoder.stop();
+
+    if (this.decoder != null)
+      await this.decoder.stop();
+
+    for (const [ip, peer] of this.peers)
+      await this.remove(peer.ip);
+
+    if (this.peers)
+      this.peers.clear();
+    
+    if(this.masterTimeout) {
+      clearTimeout(this.masterTimeout);
+      console.log("master is removed");
+    }
+
+      this.messageHandler = null;
+      this.speaker = null;
+      this.micInterval=null;
+      this.microphone = null;
+      this.encoder = null;
+      this.decoder = null;
+      this.peers = null;
+      this.masterTimeout=null;
+      this.mixerInterval=null;
+      this.mix=null;
+    
+    
+    this.exLock.unlock();
+
   }
 
   unmute(){
@@ -189,6 +226,7 @@ export class Room {
   }
 
   refreshAudio(stream){
+    if(!this.running)return ;
     if(this.speaker!=null)
        this.speaker.stop();
        
@@ -199,7 +237,9 @@ export class Room {
     this.microphone=new Microphone(stream);
   }
 
-  remove(peerIP){
+  async remove(peerIP){
+
+    if(!this.running) return;
     const peer=this.peers.get(peerIP);
     if(!peer)return;
     this.messageHandler.removeConn(MsgType.TCP,this.selfIP,0,peer.ip,peer.port);
@@ -217,30 +257,24 @@ export class Room {
 
     const mixInfo=this.mixerBuffer.get(peer.ip);
     if(mixInfo){
-      mixInfo.encoder.stop();
-      mixInfo.decoder.stop();
+      await mixInfo.encoder.stop();
+      await mixInfo.decoder.stop();
       this.mixerBuffer.delete(peer.ip);
     }
   }
 
   connect(peer) {
+    if(!this.running)return;
     const existing = this.peers.get(peer.ip);
     if (existing && existing.status === PeerStatus.CONNECTING) return;
 
     const updatedPeer = {
-      // identity
       ip: peer.ip,
       port: peer.port,
-
-      // connection state
       randomPort: existing?.randomPort ?? null,
       status: PeerStatus.CONNECTING,
-
-      // metadata
       name: peer.name ?? existing?.name ?? "",
       photo: peer.photo ?? existing?.photo ?? "",
-
-      // handlers (must persist)
       senderConn: existing?.senderConn ?? null,
       receiverConn: existing?.receiverConn ?? null,
     };
@@ -279,24 +313,18 @@ export class Room {
   }
 
   _onConnect(srcIP, srcPort, _dIP, _dPort, _type, payload) {
+    if(!this.running)return;
     const data = JSON.parse(new TextDecoder().decode(payload));
     if(data.roomId!==this.roomId)
       return this.remove(srcIP);//remove if it exist otherwise it auto remove by pendingtcp
     const existing = this.peers.get(srcIP);
     const peer = {
-      // identity
       ip: srcIP,
       port: data.port ?? existing?.port ?? null,
       randomPort: srcPort,
-
-      // state
       status: PeerStatus.CONNECTED,
-
-      // metadata
       name: data.name ?? existing?.name ?? "",
       photo: data.photo ?? existing?.photo ?? "",
-
-      // handlers (persistent)
       senderConn: existing?.senderConn ?? null,
       receiverConn: existing?.receiverConn ?? null,
     };
@@ -355,7 +383,7 @@ export class Room {
   }
   
   onServerConnect(){
-    if(this.currentMasterIP===null || this.currentMasterPort===null) return;
+    if(!this.running||this.currentMasterIP===null|| this.currentMasterPort===null ) return;
     
     if(this.micInterval)
         clearInterval(this.micInterval);
@@ -391,7 +419,7 @@ export class Room {
   }
 
   _addClientToMixer(peer){
-
+      if(!this.running)return;
       let mixInfo=this.mixerBuffer.get(peer.ip) || {};
 
       if(mixInfo?.encoder)
@@ -399,11 +427,13 @@ export class Room {
       if(mixInfo?.decoder)
         mixInfo.decoder.stop();
 
+      mixInfo.debt=new AtomicInt(0);
       mixInfo.encoder=new OpusEncoder();
       mixInfo.decoder=new OpusDecoder();
       mixInfo.audioBuf=new RingBuffer(48000);
       mixInfo.out=new Float32Array(960);
       this.mixerBuffer.set(peer.ip,mixInfo);
+      
 
       mixInfo.decoder.onData((pcm48)=>{
         mixInfo.audioBuf.writeSamples(pcm48)
@@ -424,7 +454,14 @@ export class Room {
   }
 
   onMixAudioRecieve(payload){
-    this.decoder.writePacket(payload);
+    if(!this.running)return;
+    const debt=this.speaker.getDebt();
+
+    if(debt>0)
+        this.speaker.updateDebt(-2*960);
+    else
+        this.decoder.writePacket(payload);
+
     if(this.masterTimeout) 
       clearTimeout(this.masterTimeout);
     this.masterTimeout=setTimeout(()=>{
@@ -435,15 +472,17 @@ export class Room {
 
   ///// Election Part
 async startElection() {
+  if(!this.running)return;
   console.log("🔹 Starting election process...");
   
   this.currentMasterIP = null;
   this.currentMasterPort = null;
   this.vote.clear();
 
-  while (this.currentMasterIP === null) {
+  while (this.running&&this.currentMasterIP === null) {
     console.log("🔸 New election round started.");
     this.vote.clear();
+    this.connect({ip: this.selfIP,port: this.selfPort,name: this.name ?? "",photo: this.photo ?? ""});
 
     for (const [ip, peer] of this.peers) {
       console.log(`🔹 Connecting to peer: ${ip}`);
@@ -453,7 +492,7 @@ async startElection() {
     console.log("⏳ Waiting 200ms for connections to stabilize...");
     await new Promise((resolve) => setTimeout(resolve, 200));
 
-    let ip = this.selfIP;
+    let ip = 0;
     console.log(`🔹 Starting candidate selection. Initial candidate IP: ${ip}`);
 
     for (const [_, peer] of this.peers) {
@@ -466,16 +505,9 @@ async startElection() {
       }
     }
 
-    const candidate = (ip === this.selfIP
-      ? {
-          ip: this.selfIP,
-          port: this.selfPort,
-          name: this.name ?? "",
-          photo: this.photo ?? "",
-        }
-      : this.peers.get(ip)
-    );
-
+    const candidate = this.peers.get(ip);
+    if(!candidate)
+      continue;
     console.log("🔹 Selected candidate for this round:", candidate);
 
     const payload = new TextEncoder().encode(JSON.stringify({}));
@@ -494,7 +526,7 @@ async startElection() {
 
   
   async onVote(srcIP, srcPort, dstIP, dstPort, type, payload){
-
+    if(!this.running)return;
     if(this.currentMasterIP!=null){
         let peer=this.peers.get(srcIP);
         this.connect(peer);
@@ -516,43 +548,39 @@ async startElection() {
         this.startMixer();
 
         for(const ip of this.vote){
+
           const peer=this.peers.get(ip);
           this.connect(peer);
         }
-
     }
 
   }
 
   startMixer() {
+    if(!this.running)return
     if (this.mixerInterval)
       clearInterval(this.mixerInterval);
-
+    this.mix = this.mix?this.mix:new Float32Array(960);
     this.mixerInterval = setInterval(() => {
-      const mix = new Float32Array(960);
-
-      // 1. read once from all buffers
+      if(!this.running)return
+      
       for (const [, mixInfo] of this.mixerBuffer) {
         mixInfo.out.fill(0);
-        mixInfo.audioBuf.readSamples(mixInfo.out);
+        const read=mixInfo.audioBuf.readSamples(mixInfo.out);
+        mixInfo.debt.update(mixInfo.out.length-read);
       }
-
-      // 2. build global mix
-      mix.fill(0);
+      this.mix.fill(0);
       for (const [, mixInfo] of this.mixerBuffer) {
         for (let i = 0; i < 960; i++) {
-          mix[i] += mixInfo.out[i];
+          this.mix[i] += mixInfo.out[i];
         }
       }
-
-      // 3. personalized mix (mix - self)
       for (const [, mixInfo] of this.mixerBuffer) {
         for (let i = 0; i < 960; i++) {
-          mixInfo.out[i] = mix[i] - mixInfo.out[i];
+          mixInfo.out[i] = this.mix[i] - mixInfo.out[i];
         }
         mixInfo.encoder.writeSamples(mixInfo.out);
       }
-
     }, 20);
   }
 

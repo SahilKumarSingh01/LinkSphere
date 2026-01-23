@@ -18,7 +18,7 @@ export class PresenceManager {
     this.organisationName =  null;
     this.privateIP = this.messageHandler.getDefaultIP();
     this.localUsers= new Map();
-    this.accUpdates=[];// it will be json nothing else
+    this.accUpdates=new Map();// it will be json nothing else
     this.messageHandler.setOnMessageReceive(MsgType.DISCOVERY,this.onDiscoveryMessage.bind(this));
     this.periodUpdateTimer=null;
     this.updateTimerInterval=1;
@@ -35,7 +35,7 @@ export class PresenceManager {
     await this.fetchAllUsers();
     this.periodUpdateTimer= setInterval(this.sendPeriodicUpdate.bind(this), this.updateTimerInterval*1000);
     this.removeInactiveTimer = setInterval(this.removeInactive.bind(this), 60 * 1000); // run every 1 minute
-
+    this.activated=true;
   }
   
   removeInactive(){
@@ -202,11 +202,11 @@ export class PresenceManager {
     myUpdate.lastSeen=now;
 
     this.localUsers.set(this.privateIP, myUpdate);
-    this.accUpdates.push(myUpdate);
+    this.accUpdates.set(this.privateIP, myUpdate);
 
     const peers = [...this.localUsers.keys()];//.filter(ip => ip !== this.privateIP); //remove this comment 
     const targets = this.pickRandom(peers, 3);
-    const jsonStr = JSON.stringify(this.accUpdates);
+    const jsonStr = JSON.stringify([...this.accUpdates.values()]);
     const payload = pako.deflate(jsonStr); 
 
     targets.forEach(t => {
@@ -218,8 +218,7 @@ export class PresenceManager {
         payload,
       );
     });
-    // console.log("send period updates is called ",this.accUpdates,targets);
-    this.accUpdates=[];
+    this.accUpdates.clear();
   }
 
 
@@ -227,13 +226,14 @@ export class PresenceManager {
     const decompressedStr = pako.inflate(payload, { to: "string" });
     const updates = JSON.parse(decompressedStr);
 
-    console.log("update received",updates);
+    // console.log("update received",updates,this.getMyPresence());
 
     updates.forEach(u => {
       const existing = this.localUsers.get(u.privateIP);
+      if(u.privateIP===this.privateIP )return;
       if (!existing || u.lastSeen > existing.lastSeen) {
         this.localUsers.set(u.privateIP, {...existing,...u});
-        this.accUpdates.push(u);
+        this.accUpdates.set(u.privateIP, {...existing,...u});
       }
       
     });

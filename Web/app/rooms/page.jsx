@@ -38,7 +38,6 @@ export default function Page() {
     for (const user of users) {
       const roomId = user.userInfo?.roomId;
       if (!roomId) continue;
-
       const roomTitle = user.userInfo?.roomTitle || "Untitled Room";
 
       if (!usersMap.has(roomId)) {

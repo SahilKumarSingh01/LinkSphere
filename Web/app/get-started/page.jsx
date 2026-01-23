@@ -61,13 +61,13 @@ export default function GetStartedPage() {
   const handleRemovePhoto = async () => {
     setPhoto(null);
     setImageSrc("");
-    await presenceManager.updateMyPresence({ photo: null });
+    await presenceManager?.updateMyPresence({ photo: null });
   };
 
   
   const handleHopIn=async ()=>{
     router.push("/rooms");
-    await presenceManager.updateMyPresence({name:userName,photo,organisation});
+    await presenceManager?.updateMyPresence({name:userName,photo,organisation});
     // await presenceManager.activate();
   } 
 

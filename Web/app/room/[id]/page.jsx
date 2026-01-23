@@ -13,9 +13,11 @@ import { useParams, useRouter } from "next/navigation";
 import { usePresenceManager } from "@context/PresenceManager.jsx";
 import { useMessageHandler } from "@context/MessageHandler.jsx";
 import { Room as RoomCore } from "@utils/Room.js";
+import { Mutex } from "@utils/Mutex";
 
 const height = 30;
 const width = 200;
+const lck=new Mutex();
 
 export default function Room() {
   const [isMicroPhoneMuted, setIsMicroPhoneMuted] = useState(false);
@@ -33,35 +35,43 @@ export default function Room() {
   /* ---------- CREATE & DESTROY ROOM INSTANCE ---------- */
   useEffect(() => {
     if(roomInstance)
-      return () => {  //don't change this order otherwise its being called multiple times
+      return  () => { //don't change this order otherwise its being called multiple times
         roomInstance.stop();
-        presenceManager?.updateMyPresence({ roomId: "", roomTitle: "" });
-      };
-    setRoomInstance(new RoomCore());
+      }
+      setRoomInstance(new RoomCore());
   }, [roomInstance]);
 
   /* ---------- INIT ROOM ---------- */
   useEffect(() => {
     if (!presenceManager || !messageHandler || !roomInstance) return;
-
+    const p=lck.lock();
     (async () => {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        const user = presenceManager.getMyPresence();
+        await p;
         await presenceManager.activate();
         presenceManager?.updateMyPresence({ roomId: id, roomTitle: roomTitle });
-
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const user = presenceManager.getMyPresence();
         roomInstance.init(
           messageHandler,
           stream,
           id,
           user.userInfo?.name,
           user.userInfo?.photo
+          
         );
       } catch (e) {
         console.log(e);
       }
+      finally{
+          lck.unlock();
+      }
     })();
+    return async ()=>{
+      await lck.lock();
+      presenceManager.updateMyPresence({ roomId: "", roomTitle: "" });
+      lck.unlock();
+    }
   }, [presenceManager, messageHandler, roomInstance, id]);
 
   /* ---------- USERS IN ROOM ---------- */

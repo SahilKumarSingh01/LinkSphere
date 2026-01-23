@@ -166,8 +166,14 @@ export default class MessageHandler {
 
             const handler = (msg) => {
             if (msg === "done") {
+                // resolve(this.localIPs);
+                if(!this.defaultIP){
+                    this.localIPs=[];
+                    setTimeout(this.sendNotification("getIp-private"),500);
+                }else
+                    resolve(this.localIPs);
                 this.removeNotificationHandler("IpAssigned", handler);
-                resolve(this.localIPs);
+
                 // console.log(this.localIPs);
                 return;
             }
