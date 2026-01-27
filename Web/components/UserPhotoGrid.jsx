@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useImageManager } from "@context/ImageManager.jsx";
 import RoomUserCard from "@components/RoomUserCard.jsx";
-
+import { PeerStatus } from "@utils/Room";
 const UserPhotoGrid = ({ users, height = 38, width = 80 }) => {
   const imageManager = useImageManager();
   const [imageMap, setImageMap] = useState(new Map());
@@ -69,6 +69,7 @@ const UserPhotoGrid = ({ users, height = 38, width = 80 }) => {
           name={user.userInfo?.name}
           profilePic={imageMap.get(user.userInfo?.photo)}
           size={size}
+          status={user.userInfo.status||PeerStatus.CONNECTED}
         />
       ))}
     </div>

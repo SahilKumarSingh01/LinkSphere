@@ -133,7 +133,7 @@ void createWebViewEnvironment() {
         controller = ctl;
         controller->get_CoreWebView2(&webview);
         
-        //disableBrowserFeatures(webview);                //uncomment it you stupid jdlkjfdl dskljdsklfjasljff ls dklfjslfjlk jskjfskjf ljdjfkldsjkflslfkljkjd kjsdkjfksjdfkdslkljfkdjf jsflsddjljl
+        disableBrowserFeatures(webview);                //uncomment it you stupid jdlkjfdl dskljdsklfjasljff ls dklfjslfjlk jskjfskjf ljdjfkldsjkflslfkljkjd kjsdkjfksjdfkdslkljfkdjf jsflsddjljl
         SetupWebViewPermissionHandler(webview);         //grant permission to all request
         // Resize WebView to window
         RECT rc;

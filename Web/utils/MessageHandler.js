@@ -29,8 +29,8 @@ export default class MessageHandler {
             const a = f(s), b = f(d);
             this.pendingTCP ??= new Map();
             this.pendingTCP.set(p, setTimeout(
-            async () => await this.removeConn((1<<7),a.ip, a.port, b.ip, b.port),
-                30000
+            async () =>{ await this.removeConn((1<<7),a.ip, a.port, b.ip, b.port)},
+                3000
             ));
         });
 
@@ -169,10 +169,11 @@ export default class MessageHandler {
                 // resolve(this.localIPs);
                 if(!this.defaultIP){
                     this.localIPs=[];
-                    setTimeout(this.sendNotification("getIp-private"),500);
-                }else
+                    setTimeout(this.sendNotification("getIp-private"),1000);
+                }else{
                     resolve(this.localIPs);
-                this.removeNotificationHandler("IpAssigned", handler);
+                    this.removeNotificationHandler("IpAssigned", handler);
+                }
 
                 // console.log(this.localIPs);
                 return;

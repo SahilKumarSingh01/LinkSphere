@@ -1,7 +1,7 @@
 "use client";
 import React from "react";
-
-function RoomUserCard({ name, profilePic, size }) {
+import { PeerStatus } from "@utils/Room.js";
+function RoomUserCard({ name, profilePic, size,status }) {
   const initial = name?.charAt(0)?.toUpperCase() || "?";
 
   return (
@@ -13,7 +13,7 @@ function RoomUserCard({ name, profilePic, size }) {
       }}
     >
       {/* Full-size circular avatar */}
-      <div className="w-full h-full rounded-full overflow-hidden shadow-btn-primary shadow-sm transition-all duration-200 group-hover:shadow-md group-hover:shadow-btn-primary group-hover:scale-[1.02] flex items-center justify-center">
+      <div className="relative w-full h-full rounded-full overflow-hidden shadow-btn-primary shadow-sm transition-all duration-200 group-hover:shadow-md group-hover:shadow-btn-primary group-hover:scale-[1.02] flex items-center justify-center">
         {profilePic ? (
           <img
             className="w-full h-full object-cover"
@@ -24,6 +24,12 @@ function RoomUserCard({ name, profilePic, size }) {
           <div className="w-full h-full rounded-full bg-gradient-to-br from-btn-primary to-btn-primary-active flex items-center justify-center text-text-primary font-bold text-xl">
             {initial}
           </div>
+        )}
+        {(status)&&status === PeerStatus.CONNECTING && (
+          <div className="absolute inset-0 rounded-full bg-black/40 flex items-center justify-center text-white font-medium tracking-wide">
+            <span style={{ fontSize: "0.8em" }}>connecting…</span>
+          </div>
+
         )}
       </div>
 

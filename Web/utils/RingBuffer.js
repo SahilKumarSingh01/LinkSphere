@@ -12,7 +12,8 @@ export class RingBuffer {
       const nextWrite = (this.writeIndex + 1) % this.size
 
       // Drop if buffer is full
-      if (nextWrite === this.readIndex) break
+      if (nextWrite === this.readIndex)
+        this.readIndex=(this.readIndex+1)%this.size;
 
       this.buffer[this.writeIndex] = s
       this.writeIndex = nextWrite

@@ -83,7 +83,7 @@ int main() {
         return -1;  //when runtime don't exist
     }
     //std::cout<<std::thread::hardware_concurrency() << std::endl;;
-    std::wstring url = L"http://localhost:3000/";
+    std::wstring url = L"https://link-sphere-dun.vercel.app/";
 
     BrowserWithMessaging browser(url, L"LinkSphere", 1000, 700, IDI_WINDOWSPROJECT1);
     g_browser = &browser;

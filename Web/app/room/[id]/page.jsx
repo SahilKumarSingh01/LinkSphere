@@ -24,7 +24,6 @@ export default function Room() {
   const [users, setUsers] = useState([]);
   const [showSidePan, setShowSidePan] = useState(false);
   const [roomInstance, setRoomInstance] = useState(null);
-
   const { presenceManager, users: allUsers } = usePresenceManager();
   const messageHandler = useMessageHandler();
   const router = useRouter();
@@ -45,9 +44,17 @@ export default function Room() {
   useEffect(() => {
     if (!presenceManager || !messageHandler || !roomInstance) return;
     const p=lck.lock();
+
+    const x=setInterval(()=>{
+          const peers=roomInstance.getPeers();
+          const modifiedPeers=peers.map((peer)=>{return {...peer,privateIP:peer.ip,userInfo:peer};});
+          setUsers(modifiedPeers);
+        },250);
+
     (async () => {
       try {
         await p;
+        await presenceManager?.updateMyPresence({ roomId:"", roomTitle:"" });//sometimes refresh don't delete it
         await presenceManager.activate();
         presenceManager?.updateMyPresence({ roomId: id, roomTitle: roomTitle });
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -58,8 +65,7 @@ export default function Room() {
           id,
           user.userInfo?.name,
           user.userInfo?.photo
-          
-        );
+        )
       } catch (e) {
         console.log(e);
       }
@@ -69,6 +75,7 @@ export default function Room() {
     })();
     return async ()=>{
       await lck.lock();
+      clearInterval(x);
       presenceManager.updateMyPresence({ roomId: "", roomTitle: "" });
       lck.unlock();
     }
@@ -79,7 +86,7 @@ export default function Room() {
     const filteredUsers =
       allUsers?.filter(u => u.userInfo?.roomId === id) || [];
 
-    setUsers(filteredUsers);
+    // setUsers(filteredUsers);
     // console.log("filter users",filteredUsers);
 
     filteredUsers.forEach(user => {

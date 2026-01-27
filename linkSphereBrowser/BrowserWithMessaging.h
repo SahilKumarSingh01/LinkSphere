@@ -84,6 +84,7 @@ private:
     bool g_running=1;
     bool windowAlive=true;
     ThreadPool* threadPool;
+    bool m_isNavigating = false;
 
     void initilizeMessageChannel()
     {
@@ -102,7 +103,6 @@ private:
                         Callback<ICoreWebView2ExecuteScriptCompletedHandler>([this](HRESULT, LPCWSTR) -> HRESULT {
                             // Initialize shared memory once script is injected
                             this->setupSharedMemory(true);
-                            //std::cout << "shared memory is called" << std::endl;
                             return S_OK;
                             }).Get()
                          );
@@ -158,36 +158,54 @@ private:
 
     BOOL setupNavigationHandler(wil::com_ptr<ICoreWebView2>& webview)
     {
+        webview->add_NavigationStarting(Callback<ICoreWebView2NavigationStartingEventHandler>(
+            [this](auto, auto) { std::cout << "navigating...." << std::endl; m_isNavigating = true; return S_OK; }).Get(), nullptr);
+
         webview->add_NavigationCompleted(
             Callback<ICoreWebView2NavigationCompletedEventHandler>(
                 [this](ICoreWebView2* sender,
-                    ICoreWebView2NavigationCompletedEventArgs* args) -> HRESULT{
+                    ICoreWebView2NavigationCompletedEventArgs* args) -> HRESULT {
+                        m_isNavigating = false;
+                        BOOL isSuccess = FALSE;
+                        args->get_IsSuccess(&isSuccess);
 
-                    BOOL isSuccess = FALSE;
-                    args->get_IsSuccess(&isSuccess);
-                    COREWEBVIEW2_WEB_ERROR_STATUS errorStatus;
-                    if (!isSuccess && offlinePageCallback) {
-                        args->get_WebErrorStatus(&errorStatus);
-                        LPWSTR currentUri = nullptr;
-                        sender->get_Source(&currentUri);
-                        std::wstring uriString(currentUri);
-                        CoTaskMemFree(currentUri); 
-                        if (uriString == this->url) {
+                        COREWEBVIEW2_WEB_ERROR_STATUS webErrorStatus;
+                        args->get_WebErrorStatus(&webErrorStatus);
 
-                            std::wstring html =
-                                offlinePageCallback(static_cast<int>(errorStatus));
-                            //std::cout << "here we are actually attacking it " << std::endl;
-                            sender->NavigateToString(html.c_str());
+                        int httpStatusCode = 0;
+                        wil::com_ptr<ICoreWebView2NavigationCompletedEventArgs2> args2;
+                        if (SUCCEEDED(args->QueryInterface(IID_PPV_ARGS(&args2)))) {
+                            args2->get_HttpStatusCode(&httpStatusCode);
                         }
 
-                    }
-                    //std::cout << "on navigation completed function is called\n" << errorStatus << "\n";
+                        if (!isSuccess || httpStatusCode >= 400) {
+                            if (webErrorStatus == COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED|| httpStatusCode == 404) {
+                                return S_OK;
+                            }
+                            int errorCodeToReport = 0;
+                            if (!isSuccess && webErrorStatus != 0) {
+                                errorCodeToReport = static_cast<int>(webErrorStatus);
+                            }
+                            else {
+                                errorCodeToReport = httpStatusCode;
+                            }
 
-                    return S_OK;
+                            LPWSTR currentUri = nullptr;
+                            sender->get_Source(&currentUri);
+                            std::wstring uriString(currentUri);
+                            CoTaskMemFree(currentUri);
+
+                            if (uriString == this->url && offlinePageCallback) {
+                                std::wstring html = offlinePageCallback(errorCodeToReport);
+                                sender->NavigateToString(html.c_str());
+                            }
+                        }
+                        std::cout << "navigation completed" << std::endl;
+                        return S_OK;
                 }).Get(),
-                    nullptr//navCompletedToken
+                    nullptr
                     );
-        return false;
+        return TRUE;
     }
 
 
@@ -282,7 +300,7 @@ private:
             if (webview) {
                 webview->PostWebMessageAsString(L"close-current\0");
             }
-            return 0;
+            if(!m_isNavigating)return 0;
         }
         break;
         case WM_DESTROY:

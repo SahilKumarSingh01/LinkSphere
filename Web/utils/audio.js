@@ -1,9 +1,8 @@
 // audio.js (8 kHz mic + speaker using RingBuffer)
 import { RingBuffer } from './RingBuffer.js';
-import { AtomicInt } from './AtomicInt.js';
 
 export class Microphone {
-  constructor(stream, bufferSize = 96000) {
+  constructor(stream, bufferSize = 960*10) {
     if (!stream) throw new Error("Microphone requires a MediaStream.");
 
     this.stream = stream;
@@ -39,16 +38,15 @@ export class Microphone {
   }
 }
 export class Speaker {
-  constructor(bufferSize = 96000) {
+  constructor(bufferSize = 960*10) {
     this.ringBuffer = new RingBuffer(bufferSize);
     this.audioCtx = new (window.AudioContext)({ sampleRate: 48000 });
     this.processor = this.audioCtx.createScriptProcessor(512, 1, 1);
-    this.debt=new AtomicInt(0);
     this.processor.onaudioprocess = (e) => {
       const output = e.outputBuffer.getChannelData(0);
       const read = this.ringBuffer.readSamples(output);
+
       if (read < output.length){
-        this.debt.update(output.length-read);
         console.warn(`Speaker underflow: needed ${output.length}, got ${read}`);
         output.fill(0, read); // fill rest with silence
       }
@@ -57,26 +55,7 @@ export class Speaker {
   }
 
   writeSamples(samples) {
-    const debt = this.debt.get();
-
-    if (debt > 0) {
-      const consume = Math.min(debt, samples.length);
-      this.debt.update(-2*consume);
-      // console.log("how are you ",debt,consume);
-      return this.ringBuffer.writeSamples(samples.subarray(consume));
-    }
-
     return this.ringBuffer.writeSamples(samples);
-  }
-
-  getDebt()
-  {
-      return this.debt.get();
-  }
-
-  updateDebt(delta)
-  {
-      this.debt.update(delta);
   }
 
   stop() {
@@ -100,15 +79,12 @@ export class OpusEncoder {
           const payloadLen = chunk.byteLength;
           if (payloadLen > this.MAX_PAYLOAD) return;
 
-          // Copy payload directly after header
-          chunk.copyTo(this.bytes.subarray(this.HEADER_SIZE));
-
-          // Header
           this.view.setUint8(0, chunk.type === "key" ? 0 : 1);
           this.view.setBigUint64(1, BigInt(chunk.timestamp));
           this.view.setUint32(9, chunk.duration || 0);
 
-          // Pass ONLY the valid slice (view, not copy)
+          chunk.copyTo(this.bytes.subarray(this.HEADER_SIZE));
+
           this.onDataCb?.(
             this.bytes.subarray(0, this.HEADER_SIZE + payloadLen)
           );
@@ -147,9 +123,8 @@ export class OpusEncoder {
     this.onDataCb = cb;
   }
 
-  async stop() {
+  stop() {
     if (!this.encoder) return;
-    await this.encoder.flush();   // encode remaining frames
     this.encoder.close();         // release codec
     this.encoder = null;
     this.onDataCb = null;
@@ -161,7 +136,6 @@ export class OpusDecoder {
     this.buffer=new Float32Array(960);
     this.decoder = new AudioDecoder({
       output: (audioData) => {
-        // console.log(audioData);
         audioData.copyTo(this.buffer, { planeIndex: 0 });
         this.onPcmCb?.(this.buffer);
       },
@@ -183,7 +157,7 @@ export class OpusDecoder {
   );;
     const chunk = new EncodedAudioChunk({
       type: v.getUint8(0) ? "delta" : "key",
-      timestamp: Number(v.getBigUint64(1)),
+      timestamp: performance.now() * 1000,//Number(v.getBigUint64(1)),
       duration: v.getUint32(9),
       data: uint8.slice(13)
     });
@@ -194,9 +168,8 @@ export class OpusDecoder {
     this.onPcmCb = cb;
   }
 
-  async stop() {
+  stop() {
     if (!this.decoder) return;
-    await this.decoder.flush();   // drain decoded audio
     this.decoder.close();         // release codec
     this.decoder = null;
     this.onPcmCb = null;

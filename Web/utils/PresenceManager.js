@@ -31,11 +31,11 @@ export class PresenceManager {
   async activate(){
     if(this.activated)
         return;
+    this.activated=true;
     await this.pushMyPresence();
     await this.fetchAllUsers();
     this.periodUpdateTimer= setInterval(this.sendPeriodicUpdate.bind(this), this.updateTimerInterval*1000);
     this.removeInactiveTimer = setInterval(this.removeInactive.bind(this), 60 * 1000); // run every 1 minute
-    this.activated=true;
   }
   
   removeInactive(){
