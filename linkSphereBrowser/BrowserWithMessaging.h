@@ -10,7 +10,6 @@
 #define WM_CUSTOM_CLOSE (WM_APP + 124)
 #define WM_OFFLINE_PAGE_ALTER (WM_APP + 125)
 
-using namespace std;
 class BrowserWithMessaging : public BrowserWindow {
 public:
     using BinaryMessageCallback = void(*)(const BYTE* data, uint32_t size);
@@ -124,7 +123,7 @@ private:
 
                     if (*message == L"dataReady") {
                         // Notify the receiver thread that new data is available
-                        lock_guard<mutex> lock(g_mutex);
+                        std::lock_guard<std::mutex> lock(g_mutex);
                         g_cv.notify_one();
                         delete message; // free immediately, no need to pass to threadPool
                     }
@@ -152,14 +151,13 @@ private:
         setupNavigationHandler(webview);
         setOfflinePageCallback(offlinePageCallback);        /// it retrigger the logic if it get missed initially when webview was not ready
         initilizeMessageChannel();         //passed shared memory buffer;
-        //cout << "on webviewControllerCreated is running multiple times" << endl;
         return result;
     }
 
     BOOL setupNavigationHandler(wil::com_ptr<ICoreWebView2>& webview)
     {
         webview->add_NavigationStarting(Callback<ICoreWebView2NavigationStartingEventHandler>(
-            [this](auto, auto) { std::cout << "navigating...." << std::endl; m_isNavigating = true; return S_OK; }).Get(), nullptr);
+            [this](auto, auto) { m_isNavigating = true; return S_OK; }).Get(), nullptr);
 
         webview->add_NavigationCompleted(
             Callback<ICoreWebView2NavigationCompletedEventHandler>(
@@ -179,7 +177,7 @@ private:
                         }
 
                         if (!isSuccess || httpStatusCode >= 400) {
-                            if (webErrorStatus == COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED|| httpStatusCode == 404) {
+                            if (webErrorStatus == 18|| httpStatusCode == 404) {
                                 return S_OK;
                             }
                             int errorCodeToReport = 0;
@@ -190,17 +188,11 @@ private:
                                 errorCodeToReport = httpStatusCode;
                             }
 
-                            LPWSTR currentUri = nullptr;
-                            sender->get_Source(&currentUri);
-                            std::wstring uriString(currentUri);
-                            CoTaskMemFree(currentUri);
-
-                            if (uriString == this->url && offlinePageCallback) {
+                            if (offlinePageCallback) {
                                 std::wstring html = offlinePageCallback(errorCodeToReport);
                                 sender->NavigateToString(html.c_str());
                             }
                         }
-                        std::cout << "navigation completed" << std::endl;
                         return S_OK;
                 }).Get(),
                     nullptr
@@ -267,8 +259,6 @@ private:
         switch (msg) {
         case WM_CUSTOM_CLOSE:
         {
-            //cout << "custom close funtion is called \n";
-            cout << "we are here as just about to close" << endl;
             return DefWindowProc(hWnd, WM_CLOSE, 0, 0);
         }
         case WM_SEND_TO_WEBVIEW:
@@ -304,7 +294,6 @@ private:
         }
         break;
         case WM_DESTROY:
-            cout << "destroy function is called\n";
             PostQuitMessage(0);
             windowAlive = false;
             break;

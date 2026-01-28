@@ -47,7 +47,7 @@ export class Speaker {
       const read = this.ringBuffer.readSamples(output);
 
       if (read < output.length){
-        console.warn(`Speaker underflow: needed ${output.length}, got ${read}`);
+        // console.warn(`Speaker underflow: needed ${output.length}, got ${read}`);
         output.fill(0, read); // fill rest with silence
       }
     };

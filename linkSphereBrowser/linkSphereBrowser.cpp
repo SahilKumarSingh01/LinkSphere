@@ -69,7 +69,7 @@ void notifyNetworkEvent(const char* t) {
     if (!w.empty() && w.back() == L'\0') w.pop_back();
 
     g_browser->notify( w.c_str());
-    std::cout << "to browser " << t << endl;
+    std::cout << "to browser " << t << std::endl;
 }
 
 //void onClientConnect(const wstring & t) {
